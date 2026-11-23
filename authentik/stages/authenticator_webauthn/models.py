@@ -15,7 +15,12 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
 from authentik.core.types import UserSettingSerializer
 from authentik.flows.models import ConfigurableStage, FriendlyNamedStage, Stage
-from authentik.lib.models import InternallyManagedMixin, SerializerModel, SimpleThroughModel
+from authentik.lib.models import (
+    ExpiringModel,
+    InternallyManagedMixin,
+    SerializerModel,
+    SimpleThroughModel,
+)
 from authentik.stages.authenticator.models import Device
 from authentik.stages.authenticator_webauthn.utils import validate_webauthn_origin
 
@@ -211,7 +216,7 @@ class WebAuthnDevice(SerializerModel, Device):
         verbose_name_plural = _("WebAuthn Devices")
 
 
-class WebAuthnEnrollment(SerializerModel):
+class WebAuthnEnrollment(InternallyManagedMixin, ExpiringModel, SerializerModel):
     """A server-to-server WebAuthn enrollment ceremony for a credential.
 
     This is deliberately separate from ``WebAuthnDevice`` CRUD. A device is only
@@ -227,7 +232,10 @@ class WebAuthnEnrollment(SerializerModel):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     user = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
     requested_by = models.ForeignKey(
-        get_user_model(), on_delete=models.CASCADE, related_name="webauthn_enrollment_requests"
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="webauthn_enrollment_requests",
     )
     stage = models.ForeignKey(AuthenticatorWebAuthnStage, on_delete=models.SET_NULL, null=True)
     challenge = models.TextField()
@@ -240,11 +248,11 @@ class WebAuthnEnrollment(SerializerModel):
     # SHA-256 hex keeps the caller-supplied key out of the unique index.
     idempotency_key_digest = models.CharField(max_length=64)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
-    expires = models.DateTimeField()
+    enrollment_expires = models.DateTimeField()
     created = models.DateTimeField(auto_now_add=True)
     completed = models.DateTimeField(null=True, default=None)
 
-    class Meta:
+    class Meta(ExpiringModel.Meta):
         verbose_name = _("WebAuthn enrollment")
         verbose_name_plural = _("WebAuthn enrollments")
         constraints = [

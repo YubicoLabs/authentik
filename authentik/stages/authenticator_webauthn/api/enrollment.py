@@ -17,7 +17,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins
 from rest_framework.decorators import action
-from rest_framework.fields import CharField, ChoiceField
+from rest_framework.fields import CharField, ChoiceField, DateTimeField
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -88,7 +88,7 @@ class EnrollmentStatusField(ChoiceField):
     """Serialize effective expiry before native field rules are applied."""
 
     def to_representation(self, value: WebAuthnEnrollment) -> str:
-        if value.status == WebAuthnEnrollment.Status.PENDING and value.expires <= now():
+        if value.status == WebAuthnEnrollment.Status.PENDING and value.enrollment_expires <= now():
             return WebAuthnEnrollment.Status.EXPIRED
         return str(value.status)
 
@@ -96,6 +96,7 @@ class EnrollmentStatusField(ChoiceField):
 class WebAuthnEnrollmentSerializer(ModelSerializer):
     """Public status; enrollment options are returned only by begin."""
 
+    expires = DateTimeField(source="enrollment_expires", read_only=True)
     status = EnrollmentStatusField(
         source="*", choices=WebAuthnEnrollment.Status.choices, read_only=True
     )
@@ -186,7 +187,7 @@ class WebAuthnEnrollmentViewSet(
     def get_queryset(self) -> QuerySet[WebAuthnEnrollment]:
         if getattr(self, "swagger_fake_view", False):
             return self.queryset.none()
-        qs = super().get_queryset().order_by("-created")
+        qs = WebAuthnEnrollment.objects.all().order_by("-created")
         if not self.request.user.is_superuser:
             qs = qs.filter(requested_by=cast(User, self.request.user))
         return qs
@@ -246,10 +247,19 @@ class WebAuthnEnrollmentViewSet(
             )
             # Serialize simultaneous idempotent starts by this connector.
             User.objects.select_for_update().get(pk=request.user.pk)
-            record = WebAuthnEnrollment.objects.filter(
-                requested_by=caller, idempotency_key_digest=key_digest
-            ).first()
+            record = (
+                WebAuthnEnrollment.objects.including_expired()
+                .filter(requested_by=caller, idempotency_key_digest=key_digest)
+                .first()
+            )
             if record:
+                if record.is_expired:
+                    raise ValidationError(
+                        {
+                            "detail": "This request has expired; use a new idempotency key.",
+                            "code": "enrollment_expired",
+                        }
+                    )
                 record = get_object_or_404(self.filter_queryset(self.get_queryset()), pk=record.pk)
                 if (
                     record.user_id != user.pk
@@ -262,7 +272,10 @@ class WebAuthnEnrollmentViewSet(
                             "code": "idempotency_conflict",
                         }
                     )
-                if record.status != WebAuthnEnrollment.Status.PENDING or record.expires <= now():
+                if (
+                    record.status != WebAuthnEnrollment.Status.PENDING
+                    or record.enrollment_expires <= now()
+                ):
                     raise ValidationError(
                         {
                             "detail": (
@@ -309,6 +322,16 @@ class WebAuthnEnrollmentViewSet(
                         "AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS produces an "
                         "unrepresentable expiration date. Configure a shorter lifetime."
                     ) from exc
+                retention_days = enrollment_integer_setting(
+                    "webauthn_enrollment.retention_days", 30, minimum=0
+                )
+                try:
+                    cleanup_after = expires + timedelta(days=retention_days)
+                except OverflowError as exc:
+                    raise ValidationError(
+                        "AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS produces an "
+                        "unrepresentable cleanup date. Configure a shorter retention period."
+                    ) from exc
                 record = WebAuthnEnrollment.objects.create(
                     user=user,
                     stage=stage,
@@ -322,7 +345,8 @@ class WebAuthnEnrollmentViewSet(
                     ],
                     rp_id=rp_id,
                     origin=origin,
-                    expires=expires,
+                    enrollment_expires=expires,
+                    expires=cleanup_after,
                 )
                 self._audit("started", record)
         data = self.get_serializer(record).data
@@ -380,7 +404,7 @@ class WebAuthnEnrollmentViewSet(
                         "code": f"enrollment_{record.status}",
                     }
                 )
-            if record.expires <= now():
+            if record.enrollment_expires <= now():
                 record.status = WebAuthnEnrollment.Status.EXPIRED
                 record.save(update_fields=["status"])
                 self._audit("expired", record)

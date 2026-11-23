@@ -4744,46 +4744,6 @@
                     ],
                     "properties": {
                         "model": {
-                            "const": "authentik_stages_authenticator_webauthn.webauthnenrollment"
-                        },
-                        "id": {
-                            "type": "string"
-                        },
-                        "state": {
-                            "type": "string",
-                            "enum": [
-                                "absent",
-                                "created",
-                                "must_created",
-                                "present"
-                            ],
-                            "default": "present"
-                        },
-                        "conditions": {
-                            "type": "array",
-                            "items": {
-                                "type": "boolean"
-                            }
-                        },
-                        "permissions": {
-                            "$ref": "#/definitions/model_authentik_stages_authenticator_webauthn.webauthnenrollment_permissions"
-                        },
-                        "attrs": {
-                            "$ref": "#/definitions/model_authentik_stages_authenticator_webauthn.webauthnenrollment"
-                        },
-                        "identifiers": {
-                            "$ref": "#/definitions/model_authentik_stages_authenticator_webauthn.webauthnenrollment"
-                        }
-                    }
-                },
-                {
-                    "type": "object",
-                    "required": [
-                        "model",
-                        "identifiers"
-                    ],
-                    "properties": {
-                        "model": {
                             "const": "authentik_stages_captcha.captchastage"
                         },
                         "id": {
@@ -9838,7 +9798,6 @@
                         "authentik_stages_authenticator_validate.authenticatorvalidatestage",
                         "authentik_stages_authenticator_webauthn.authenticatorwebauthnstage",
                         "authentik_stages_authenticator_webauthn.webauthndevice",
-                        "authentik_stages_authenticator_webauthn.webauthnenrollment",
                         "authentik_stages_captcha.captchastage",
                         "authentik_stages_consent.consentstage",
                         "authentik_stages_deny.denystage",
@@ -15247,37 +15206,6 @@
                             "change_webauthndevice",
                             "delete_webauthndevice",
                             "view_webauthndevice"
-                        ]
-                    },
-                    "user": {
-                        "type": "integer"
-                    },
-                    "role": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "model_authentik_stages_authenticator_webauthn.webauthnenrollment": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        },
-        "model_authentik_stages_authenticator_webauthn.webauthnenrollment_permissions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": [
-                    "permission"
-                ],
-                "properties": {
-                    "permission": {
-                        "type": "string",
-                        "enum": [
-                            "add_webauthnenrollment",
-                            "change_webauthnenrollment",
-                            "delete_webauthnenrollment",
-                            "view_webauthnenrollment"
                         ]
                     },
                     "user": {

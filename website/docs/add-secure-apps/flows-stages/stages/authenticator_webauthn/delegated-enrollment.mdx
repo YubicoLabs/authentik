@@ -20,13 +20,16 @@ Set these values through authentik's [configuration](../../../../install-config/
 ```yaml
 AUTHENTIK_WEBAUTHN_ENROLLMENT__ORIGIN: https://authentik.company
 AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS: 300
+AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS: 30
 ```
 
 The origin is required. Use an HTTPS origin without a path, query, credentials, or fragment. HTTP is accepted only for `localhost` development. The RP ID is the origin's hostname, without its scheme or port. Choose a domain that is compatible with the user's intended authentik login; changing it can prevent the resulting credential from being used there.
 
 The lifetime defaults to five minutes. Set a positive whole number of seconds that produces a representable expiration date. The server sets the deadline at begin; retrying does not extend it. Configure the shortest lifetime that supports the enrollment process. Increasing it increases the time during which an outstanding response can complete enrollment.
 
-Expiry does not delete enrollment history.
+The enrollment deadline controls credential submission; record retention is configured separately below.
+
+Enrollment requests are runtime records and are excluded from blueprint import and export. Use the enrollment API to manage them. WebAuthn stages remain configurable through blueprints.
 
 ## Grant permissions to the service account
 
@@ -42,7 +45,7 @@ Grant `authentik_core.enroll_user_webauthn` for each user the service account ma
 
 Grant `authentik_core.view_user` for the intended target users and `authentik_stages_authenticator_webauthn.view_authenticatorwebauthnstage` for the selected stage. Prefer object permissions when the account should not access every user or stage. Do not grant superuser access for this integration.
 
-[Create an API token](../../../../users-sources/user/account-types/service-accounts.mdx#create-an-api-token) belonging to that service account, rather than using its generated app password. Send the token in the `Authorization: Bearer <api_token>` header and keep it out of client-side browser code and logs. Replacing a token for the same account preserves access to its attempts; a different service account does not inherit them.
+[Create an API token](../../../../users-sources/user/account-types/service-accounts.mdx#create-an-api-token) belonging to that service account, rather than using its generated app password. Send the token in the `Authorization: Bearer <api_token>` header and keep it out of client-side browser code and logs. Replacing a token for the same account preserves access to its attempts; a different service account does not inherit them. Deleting the initiating account preserves its enrollment records and any enrolled credentials. A replacement service account cannot access those requests. A superuser can inspect or cancel retained requests, and can complete a pending request if its deadline and policy still permit enrollment.
 
 [Custom permission checks](../../../../users-sources/access-control/custom_permissions.mdx), when enabled, also govern API access and target visibility. The initiating account owns its enrollment attempts; ordinary object grants or custom list widening do not transfer another account's attempts. Superusers can manage all attempts.
 
@@ -103,7 +106,7 @@ Send `POST /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/com
 
 Supply the actual credential response from the enrollment client. Do not construct substitute challenge, origin, signature, or attestation values.
 
-Successful completion returns HTTP 200 with `status` equal to `completed` and `device` identifying the user's WebAuthn device. If the response is lost, retry the identical completion payload. An authorized retry returns the existing result, including after the original deadline; it does not create another credential. A different completion payload or a revoked resulting device does not replay success.
+Successful completion returns HTTP 200 with `status` equal to `completed` and `device` identifying the user's WebAuthn device. If the response is lost, retry the identical completion payload. An authorized retry returns the existing result, including after the original deadline while the record is retained; it does not create another credential. A different completion payload or a revoked resulting device does not replay success.
 
 ## Verify the result
 
@@ -129,4 +132,14 @@ Read attempt status before deciding whether to retry a failed transport request.
 
 Cancel a pending attempt with `POST /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/cancel/`. Cancellation does not revoke a completed device. Use existing device management to revoke it.
 
-Deleting the stage prevents pending completion but retains the attempt and any completed device. Deleting a device retains the attempt without a device reference. Deleting the target user or initiating account deletes their related attempts. Enrollment records are recovery state, not an immutable audit archive, and are not automatically purged at the challenge deadline.
+Deleting the stage prevents pending completion but retains the attempt and any completed device. Deleting a device retains the attempt without a device reference. Deleting the target user deletes their related attempts and credentials. Deleting the initiating account preserves the attempts and credentials, without transferring ownership to another service account.
+
+## Record retention
+
+Enrollment records remain available for 30 days after the enrollment deadline by default, whether the attempt is pending, completed, or cancelled. The API's `expires` field is the deadline for completing enrollment, not the record cleanup date.
+
+Set `AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS` to a nonnegative whole number of days. Zero makes records eligible for cleanup at the enrollment deadline. The server fixes the cleanup date when creating an attempt; changing the setting does not extend or shorten existing records. When upgrading existing enrollment records, the migration preserves their enrollment deadlines and assigns the default 30-day retention period.
+
+After retention ends, list and detail requests no longer expose the record, and completion retries return HTTP 404. authentik's scheduled expired-model cleanup removes the record without deleting the enrolled credential. Cleanup is asynchronous. Until it runs, beginning with the same account and request key returns `enrollment_expired`; after removal, that key can identify a new attempt. Always use a new request key for a new enrollment.
+
+These records support status checks and retries. They are not a permanent audit archive. Enrollment audit events follow authentik's existing event retention policy.

@@ -310,8 +310,10 @@ class TestWebAuthnEnrollment(APITestCase):
                 after = now()
                 self.assertEqual(begun.status_code, 201)
                 record = WebAuthnEnrollment.objects.get(pk=begun.data["pk"])
-                self.assertGreaterEqual(record.expires, before + timedelta(seconds=seconds))
-                self.assertLessEqual(record.expires, after + timedelta(seconds=seconds))
+                self.assertGreaterEqual(
+                    record.enrollment_expires, before + timedelta(seconds=seconds)
+                )
+                self.assertLessEqual(record.enrollment_expires, after + timedelta(seconds=seconds))
 
     def test_inspection_reports_expiry_without_a_completion_attempt(self):
         """Status polling must not advertise an elapsed challenge as usable."""
@@ -661,8 +663,8 @@ class TestWebAuthnEnrollment(APITestCase):
     def test_expired_or_cancelled_ceremony_cannot_persist_a_device(self):
         expired = self.begin(key="expired")
         enrollment = WebAuthnEnrollment.objects.get(pk=expired.data["pk"])
-        enrollment.expires = now() - timedelta(seconds=1)
-        enrollment.save(update_fields=["expires"])
+        enrollment.enrollment_expires = now() - timedelta(seconds=1)
+        enrollment.save(update_fields=["enrollment_expires"])
         _, expired_attestation = self.credential_response(expired)
         self.assertEqual(
             self.complete(expired.data["pk"], expired_attestation).status_code,
