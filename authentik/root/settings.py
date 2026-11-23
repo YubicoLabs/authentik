@@ -209,6 +209,9 @@ SPECTACULAR_SETTINGS = {
         "TransportModeEnum": "authentik.events.models.TransportMode",
         "UserTypeEnum": "authentik.core.models.UserTypes",
         "UserVerificationEnum": "authentik.stages.authenticator_webauthn.models.UserVerification",
+        "WebAuthnEnrollmentStatusEnum": (
+            "authentik.stages.authenticator_webauthn.models.WebAuthnEnrollment.Status"
+        ),
         "WebAuthnHintEnum": "authentik.stages.authenticator_webauthn.models.WebAuthnHint",
         "WSFedSAMLVersionEnum": (
             "authentik.enterprise.providers.ws_federation.models.WSFederationSAMLVersion"

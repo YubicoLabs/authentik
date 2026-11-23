@@ -1,0 +1,145 @@
+---
+title: Delegated WebAuthn enrollment
+description: Authorize an integration to enroll a WebAuthn credential for an existing user.
+---
+
+Delegated enrollment lets an authorized integration create a WebAuthn credential for another user. authentik issues credential-creation options, verifies the registration response, and stores a normal WebAuthn device for the user. The integration does not upload a private key or impersonate the user.
+
+## Prerequisites
+
+- An existing, active target user.
+- A [WebAuthn authenticator setup stage](./index.mdx) with the required credential settings.
+- An enrollment client that can create a credential for the configured relying-party domain and return a WebAuthn registration response.
+- A [service account](../../../../users-sources/user/account-types/service-accounts.mdx) with an API token and the permissions described below.
+- An authentication flow that accepts WebAuthn credentials through the [Authenticator Validation stage](../authenticator_validate/index.mdx).
+
+## Configure the enrollment origin and lifetime
+
+Set these values through authentik's [configuration](../../../../install-config/configuration/configuration.mdx) and apply the deployment configuration to each server instance:
+
+```yaml
+AUTHENTIK_WEBAUTHN_ENROLLMENT__ORIGIN: https://authentik.company
+AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS: 300
+AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS: 30
+```
+
+The origin is required. Use an HTTPS origin without a path, query, credentials, or fragment. HTTP is accepted only for `localhost` development. The RP ID is the origin's hostname, without its scheme or port. Choose a domain that is compatible with the user's intended authentik login; changing it can prevent the resulting credential from being used there.
+
+The lifetime defaults to five minutes. Set a positive whole number of seconds that produces a representable expiration date. The server sets the deadline at begin; retrying does not extend it. Configure the shortest lifetime that supports the enrollment process. Increasing it increases the time during which an outstanding response can complete enrollment.
+
+The enrollment deadline controls credential submission; record retention is configured separately below.
+
+Enrollment requests are runtime records and are excluded from blueprint import and export. Use the enrollment API to manage them. WebAuthn stages remain configurable through blueprints.
+
+## Grant permissions to the service account
+
+Create a dedicated [role](../../../../users-sources/roles/manage_roles.mdx), assign it to the service account, and grant these global permissions using [permission management](../../../../users-sources/access-control/manage_permissions.mdx):
+
+| Permission in `authentik_stages_authenticator_webauthn` | Used for                      |
+| ------------------------------------------------------- | ----------------------------- |
+| `view_webauthnenrollment`                               | All enrollment operations     |
+| `add_webauthnenrollment`                                | Begin an attempt              |
+| `change_webauthnenrollment`                             | Complete or cancel an attempt |
+
+Grant `authentik_core.enroll_user_webauthn` for each user the service account may enroll. This permission is checked at both begin and completion, including successful retries. A global grant authorizes enrollment for all otherwise accessible users. Viewing a user or having permission to create devices does not grant this authority.
+
+Grant `authentik_core.view_user` for the intended target users and `authentik_stages_authenticator_webauthn.view_authenticatorwebauthnstage` for the selected stage. Prefer object permissions when the account should not access every user or stage. Do not grant superuser access for this integration.
+
+[Create an API token](../../../../users-sources/user/account-types/service-accounts.mdx#create-an-api-token) belonging to that service account, rather than using its generated app password. Send the token in the `Authorization: Bearer <api_token>` header and keep it out of client-side browser code and logs. Replacing a token for the same account preserves access to its attempts; a different service account does not inherit them. Deleting the initiating account preserves its enrollment records and any enrolled credentials. A replacement service account cannot access those requests. A superuser can inspect or cancel retained requests, and can complete a pending request if its deadline and policy still permit enrollment.
+
+[Custom permission checks](../../../../users-sources/access-control/custom_permissions.mdx), when enabled, also govern API access and target visibility. The initiating account owns its enrollment attempts; ordinary object grants or custom list widening do not transfer another account's attempts. Superusers can manage all attempts.
+
+Custom field-hiding rules apply to standard list and retrieve responses, including effective expiry status. authentik does not expose the `hidden_fields` hook for custom actions such as `begin`; use operation permissions to control access to creation options. Superusers retain authentik's exemption from custom permission checks.
+
+:::warning Enrollment authority
+An account that can enroll credentials for a user can provision a means of authenticating as that user. Protect the integration's token and its approval process accordingly. Policies attached to an interactive flow do not run merely because the API uses a stage from that flow.
+:::
+
+An issuer that loses enrollment authority can still inspect or cancel its own pending attempts if it retains the enrollment view/change permissions. Cancellation does not issue a credential.
+
+## Choose credential settings
+
+The selected stage supplies user verification, resident-key requirements, authenticator attachment, hints, and device-type restrictions. For discoverable credentials, choose the appropriate resident-key requirement. See the [stage settings](./index.mdx#configuration-options).
+
+Begin captures the creation options and device-type restrictions for that attempt. Changes to these stage settings affect new attempts. Completion still checks current caller authority, target-user access, stage availability, and supported algorithms. Cancel outstanding attempts if their issued policy is no longer acceptable.
+
+The stage's **Additional accepted origins** setting applies to interactive registration. Delegated enrollment verifies only the server-configured origin saved on the attempt; it does not inherit that list. Configure authentication origins separately on the Authenticator Validation stage when needed.
+
+This API does not run the stage's interactive flow, its maximum-registration-attempt counter, or its configuration flow. It requests direct attestation and verifies the response using authentik's WebAuthn verifier. Device-type restrictions are not a substitute for an independently established attestation trust policy.
+
+## Begin an attempt
+
+Send `POST /api/v3/authenticators/admin/webauthn-enrollments/begin/` with a JSON body:
+
+```json
+{
+    "user": 42,
+    "stage": "<stage_uuid>",
+    "idempotency_key": "<unique_request_key>"
+}
+```
+
+Replace `42` with the target user's numeric ID. The stage uses its UUID, not its name. Generate a nonempty request key for this attempt and retain it unchanged when retrying the same request.
+
+A successful response returns HTTP 201 with the attempt `pk`, `expires`, `origin`, `rp_id`, and `registration` creation options. Save the attempt ID and deadline. Repeating the same pending request with the same account and key returns the original options. Reusing the key with different parameters fails.
+
+Pass the returned creation options to your enrollment client. Browser WebAuthn clients must decode base64url binary fields before calling `navigator.credentials.create()`, or use a supported WebAuthn JSON conversion helper. This endpoint is not itself a browser enrollment page. The client must create the credential in the configured origin context; cross-origin iframe ceremonies are not supported.
+
+## Complete the attempt
+
+Send `POST /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/complete/` using the same initiating account:
+
+```json
+{
+    "response": {
+        "id": "<credential_id_base64url>",
+        "rawId": "<credential_id_base64url>",
+        "type": "public-key",
+        "response": {
+            "clientDataJSON": "<client_data_base64url>",
+            "attestationObject": "<attestation_object_base64url>"
+        },
+        "clientExtensionResults": {}
+    }
+}
+```
+
+Supply the actual credential response from the enrollment client. Do not construct substitute challenge, origin, signature, or attestation values.
+
+Successful completion returns HTTP 200 with `status` equal to `completed` and `device` identifying the user's WebAuthn device. If the response is lost, retry the identical completion payload. An authorized retry returns the existing result, including after the original deadline while the record is retained; it does not create another credential. A different completion payload or a revoked resulting device does not replay success.
+
+## Verify the result
+
+### Test authentication
+
+1. Read `GET /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/` and confirm the completed state and device ID.
+2. Start a fresh user login session for the configured domain and authenticate with the newly enrolled credential. Completion alone does not prove that the user's login flow accepts it.
+3. Confirm that an account without the required permissions cannot enroll for the target user or access another issuer's attempt.
+
+## Handle failures and cancellation
+
+Read attempt status before deciding whether to retry a failed transport request. Several attempts for one user can be pending and can complete in different orders; correlate each response with its own attempt ID.
+
+| Outcome                                        | Recovery                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `idempotency_conflict`                         | Restore the original begin parameters, or use a new request key for a genuinely new attempt.                 |
+| `credential_invalid`                           | Correct the credential response and retry before expiry; the invalid response does not consume the attempt.  |
+| `enrollment_expired` or `enrollment_cancelled` | Start a new attempt and create a response for its new challenge.                                             |
+| `enrollment_policy_unavailable`                | Restore an appropriate stage configuration or begin a new attempt; a missing stage is not silently replaced. |
+| `credential_exists`                            | Reconcile the existing device instead of importing the same credential again.                                |
+| `credential_revoked`                           | Do not replay the old credential to restore it. Use the approved recovery process.                           |
+| HTTP 403 or 404                                | Check current permissions, target visibility, initiating account, and attempt ID before retrying.            |
+
+Cancel a pending attempt with `POST /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/cancel/`. Cancellation does not revoke a completed device. Use existing device management to revoke it.
+
+Deleting the stage prevents pending completion but retains the attempt and any completed device. Deleting a device retains the attempt without a device reference. Deleting the target user deletes their related attempts and credentials. Deleting the initiating account preserves the attempts and credentials, without transferring ownership to another service account.
+
+## Record retention
+
+Enrollment records remain available for 30 days after the enrollment deadline by default, whether the attempt is pending, completed, or cancelled. The API's `expires` field is the deadline for completing enrollment, not the record cleanup date.
+
+Set `AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS` to a nonnegative whole number of days. Zero makes records eligible for cleanup at the enrollment deadline. The server fixes the cleanup date when creating an attempt; changing the setting does not extend or shorten existing records. When upgrading existing enrollment records, the migration preserves their enrollment deadlines and assigns the default 30-day retention period.
+
+After retention ends, list and detail requests no longer expose the record, and completion retries return HTTP 404. authentik's scheduled expired-model cleanup removes the record without deleting the enrolled credential. Cleanup is asynchronous. Until it runs, beginning with the same account and request key returns `enrollment_expired`; after removal, that key can identify a new attempt. Always use a new request key for a new enrollment.
+
+These records support status checks and retries. They are not a permanent audit archive. Enrollment audit events follow authentik's existing event retention policy.
