@@ -53,6 +53,19 @@ PLAN_CONTEXT_WEBAUTHN_CHALLENGE = "goauthentik.io/stages/authenticator_webauthn/
 PLAN_CONTEXT_WEBAUTHN_ATTEMPT = "goauthentik.io/stages/authenticator_webauthn/attempt"
 
 
+def get_authenticator_attachment(stage: AuthenticatorWebAuthnStage):
+    """Honor explicit attachment, or infer it from hints for older user agents."""
+    # Existing stage behavior; hint semantics: https://www.w3.org/TR/webauthn-3/#enum-hints
+    if stage.authenticator_attachment:
+        return AuthenticatorAttachment(str(stage.authenticator_attachment))
+    hints = set(stage.hints)
+    if hints and hints <= {"security-key", "hybrid"}:
+        return AuthenticatorAttachment.CROSS_PLATFORM
+    if hints and hints <= {"client-device"}:
+        return AuthenticatorAttachment.PLATFORM
+    return None
+
+
 @dataclass
 class VerifiedRegistrationData:
     registration: VerifiedRegistration
@@ -161,25 +174,8 @@ class AuthenticatorWebAuthnStageView(ChallengeStageView):
         self.executor.plan.context.pop(PLAN_CONTEXT_WEBAUTHN_CHALLENGE, None)
         user = self.get_pending_user()
 
-        # library accepts none so we store null in the database, but if there is a value
-        # set, cast it to string to ensure it's not a django class
-        authenticator_attachment = stage.authenticator_attachment
-        if authenticator_attachment:
-            authenticator_attachment = AuthenticatorAttachment(str(authenticator_attachment))
-
+        authenticator_attachment = get_authenticator_attachment(stage)
         hints = [PublicKeyCredentialHint(h) for h in stage.hints] or None
-
-        # For compatibility with older user agents that don't support hints,
-        # auto-infer authenticatorAttachment from hints when not explicitly set.
-        # https://w3c.github.io/webauthn/#enum-hints
-        if hints and not authenticator_attachment:
-            hint_values = set(stage.hints)
-            cross_platform = {"security-key", "hybrid"}
-            platform = {"client-device"}
-            if hint_values <= cross_platform:
-                authenticator_attachment = AuthenticatorAttachment.CROSS_PLATFORM
-            elif hint_values <= platform:
-                authenticator_attachment = AuthenticatorAttachment.PLATFORM
 
         rp_id = get_rp_id(self.request)
 
