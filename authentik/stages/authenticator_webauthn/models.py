@@ -1,5 +1,7 @@
 """WebAuthn stage"""
 
+from uuid import uuid4
+
 from cryptography.x509 import Certificate, load_pem_x509_certificate
 from django.contrib.auth import get_user_model
 from django.contrib.postgres.fields.array import ArrayField
@@ -13,7 +15,12 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
 from authentik.core.types import UserSettingSerializer
 from authentik.flows.models import ConfigurableStage, FriendlyNamedStage, Stage
-from authentik.lib.models import InternallyManagedMixin, SerializerModel, SimpleThroughModel
+from authentik.lib.models import (
+    ExpiringModel,
+    InternallyManagedMixin,
+    SerializerModel,
+    SimpleThroughModel,
+)
 from authentik.stages.authenticator.models import Device
 from authentik.stages.authenticator_webauthn.utils import validate_webauthn_origin
 
@@ -207,6 +214,64 @@ class WebAuthnDevice(SerializerModel, Device):
     class Meta:
         verbose_name = _("WebAuthn Device")
         verbose_name_plural = _("WebAuthn Devices")
+
+
+class WebAuthnEnrollment(InternallyManagedMixin, ExpiringModel, SerializerModel):
+    """A server-to-server WebAuthn enrollment ceremony for a credential.
+
+    This is deliberately separate from ``WebAuthnDevice`` CRUD. A device is only
+    created after a matching, one-time registration response has been verified.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        COMPLETED = "completed"
+        CANCELLED = "cancelled"
+        EXPIRED = "expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    user = models.ForeignKey(get_user_model(), on_delete=models.CASCADE)
+    requested_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="webauthn_enrollment_requests",
+    )
+    stage = models.ForeignKey(AuthenticatorWebAuthnStage, on_delete=models.SET_NULL, null=True)
+    challenge = models.TextField()
+    registration_options = models.JSONField(default=dict)
+    allowed_aaguids = models.JSONField(default=list)
+    response_digest = models.CharField(max_length=64, blank=True)
+    device = models.ForeignKey(WebAuthnDevice, on_delete=models.SET_NULL, null=True, default=None)
+    rp_id = models.CharField(max_length=253)
+    origin = models.TextField()
+    # SHA-256 hex keeps the caller-supplied key out of the unique index.
+    idempotency_key_digest = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    enrollment_expires = models.DateTimeField()
+    created = models.DateTimeField(auto_now_add=True)
+    completed = models.DateTimeField(null=True, default=None)
+
+    class Meta(ExpiringModel.Meta):
+        verbose_name = _("WebAuthn enrollment")
+        verbose_name_plural = _("WebAuthn enrollments")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requested_by", "idempotency_key_digest"],
+                name="webauthn_enrollment_caller_idempotency",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"WebAuthn enrollment for {self.user_id} ({self.status})"
+
+    @property
+    def serializer(self) -> Serializer:
+        from authentik.stages.authenticator_webauthn.api.enrollment import (
+            WebAuthnEnrollmentSerializer,
+        )
+
+        return WebAuthnEnrollmentSerializer
 
 
 class WebAuthnDeviceType(InternallyManagedMixin, SerializerModel):

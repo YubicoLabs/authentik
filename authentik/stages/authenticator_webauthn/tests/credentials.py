@@ -9,10 +9,17 @@ from hashlib import sha256
 from json import dumps
 from os import urandom
 
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    ECDSA,
+    SECP256R1,
+    EllipticCurvePrivateKey,
+    generate_private_key,
+)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.mldsa import MLDSA44PrivateKey
+from cryptography.hazmat.primitives.hashes import SHA256
 from fido2 import cbor
-from fido2.cose import MLDSA44, CoseKey, EdDSA
+from fido2.cose import ES256, MLDSA44, CoseKey, EdDSA
 from fido2.webauthn import AttestationObject, AttestedCredentialData, AuthenticatorData
 from webauthn.helpers.bytes_to_base64url import bytes_to_base64url
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
@@ -47,8 +54,13 @@ class SoftwareCredential:
     ):
         self.rp_id = rp_id
         self.origin = origin
-        private_key_class, self.cose_class = _KEY_CLASSES[alg]
-        self.private_key = private_key_class.generate()
+        self.cose_class: type[CoseKey]
+        if alg == COSEAlgorithmIdentifier.ECDSA_SHA_256:
+            self.cose_class = ES256
+            self.private_key = generate_private_key(SECP256R1())
+        else:
+            private_key_class, self.cose_class = _KEY_CLASSES[alg]
+            self.private_key = private_key_class.generate()
         self.credential_id = urandom(32)
         self.sign_count = 0
 
@@ -93,7 +105,11 @@ class SoftwareCredential:
             self.sign_count,
         )
         client_data = _client_data("webauthn.get", challenge, self.origin)
-        signature = self.private_key.sign(bytes(auth_data) + sha256(client_data).digest())
+        signed_data = bytes(auth_data) + sha256(client_data).digest()
+        if isinstance(self.private_key, EllipticCurvePrivateKey):
+            signature = self.private_key.sign(signed_data, ECDSA(SHA256()))
+        else:
+            signature = self.private_key.sign(signed_data)
         return {
             "id": bytes_to_base64url(self.credential_id),
             "rawId": bytes_to_base64url(self.credential_id),

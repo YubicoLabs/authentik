@@ -415,6 +415,7 @@ class User(SerializerModel, AttributesMixin, AbstractUser):
         verbose_name_plural = _("Users")
         permissions = [
             ("reset_user_password", _("Reset Password")),
+            ("enroll_user_webauthn", _("Can enroll a WebAuthn authenticator for a user")),
             ("impersonate", _("Can impersonate other users")),
             ("preview_user", _("Can preview user data sent to providers")),
             ("view_user_applications", _("View applications the user has access to")),
