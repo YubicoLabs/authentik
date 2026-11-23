@@ -1,7 +1,7 @@
 """Endpoints run the check functions they offer"""
 
 from rest_framework.status import HTTP_200_OK
-from rest_framework.test import APITestCase
+from rest_framework.test import APITransactionTestCase
 
 from authentik.api.v3.urls import router
 from authentik.core.tests.utils import create_test_user
@@ -15,9 +15,12 @@ FAIL_LIST = "def narrow_list(request, queryset):\n    raise ValueError"
 FAIL_ALTER = "def alter_response(request, data):\n    raise ValueError"
 
 
-class TestPermissionCheckCoverage(APITestCase):
+class TestPermissionCheckCoverage(APITransactionTestCase):
     """Probe every list endpoint: a denying has_permission and a failing narrow_list
-    must turn a visible list into a 403, and a failing alter_response into a 500."""
+    must turn a visible list into a 403, and a failing alter_response into a 500.
+
+    Commit settings so the background cache refresh can read the enabled flag.
+    """
 
     def setUp(self):
         EnableCustomPermissions.set(True)
