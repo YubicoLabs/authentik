@@ -52,6 +52,10 @@ import {
     PaginatedWebAuthnDeviceListFromJSON,
 } from "../models/PaginatedWebAuthnDeviceList.js";
 import {
+    type PaginatedWebAuthnEnrollmentList,
+    PaginatedWebAuthnEnrollmentListFromJSON,
+} from "../models/PaginatedWebAuthnEnrollmentList.js";
+import {
     type PatchedDuoDeviceRequest,
     PatchedDuoDeviceRequestToJSON,
 } from "../models/PatchedDuoDeviceRequest.js";
@@ -94,6 +98,22 @@ import {
     type WebAuthnDeviceRequest,
     WebAuthnDeviceRequestToJSON,
 } from "../models/WebAuthnDeviceRequest.js";
+import {
+    type WebAuthnEnrollment,
+    WebAuthnEnrollmentFromJSON,
+} from "../models/WebAuthnEnrollment.js";
+import {
+    type WebAuthnEnrollmentBeginRequest,
+    WebAuthnEnrollmentBeginRequestToJSON,
+} from "../models/WebAuthnEnrollmentBeginRequest.js";
+import {
+    type WebAuthnEnrollmentCompleteRequest,
+    WebAuthnEnrollmentCompleteRequestToJSON,
+} from "../models/WebAuthnEnrollmentCompleteRequest.js";
+import {
+    type WebAuthnEnrollmentOptions,
+    WebAuthnEnrollmentOptionsFromJSON,
+} from "../models/WebAuthnEnrollmentOptions.js";
 import * as runtime from "../runtime.js";
 
 export interface AuthenticatorsAdminAllListRequest {
@@ -433,6 +453,45 @@ export interface AuthenticatorsAdminWebauthnDestroyRequest {
      * A unique integer value identifying this WebAuthn Device.
      */
     id: number;
+}
+
+export interface AuthenticatorsAdminWebauthnEnrollmentsBeginCreateRequest {
+    webAuthnEnrollmentBeginRequest: WebAuthnEnrollmentBeginRequest;
+}
+
+export interface AuthenticatorsAdminWebauthnEnrollmentsCancelCreateRequest {
+    /**
+     * A UUID string identifying this WebAuthn enrollment.
+     */
+    id: string;
+}
+
+export interface AuthenticatorsAdminWebauthnEnrollmentsCompleteCreateRequest {
+    /**
+     * A UUID string identifying this WebAuthn enrollment.
+     */
+    id: string;
+    webAuthnEnrollmentCompleteRequest: WebAuthnEnrollmentCompleteRequest;
+}
+
+export interface AuthenticatorsAdminWebauthnEnrollmentsListRequest {
+    device?: number;
+    /**
+     * A page number within the paginated result set.
+     */
+    page?: number;
+    /**
+     * Number of results to return per page.
+     */
+    pageSize?: number;
+    user?: number;
+}
+
+export interface AuthenticatorsAdminWebauthnEnrollmentsRetrieveRequest {
+    /**
+     * A UUID string identifying this WebAuthn enrollment.
+     */
+    id: string;
 }
 
 export interface AuthenticatorsAdminWebauthnListRequest {
@@ -3559,6 +3618,388 @@ export class AuthenticatorsApi extends runtime.BaseAPI {
         initOverrides?: RequestInit | runtime.InitOverrideFunction,
     ): Promise<void> {
         await this.authenticatorsAdminWebauthnDestroyRaw(requestParameters, initOverrides);
+    }
+
+    /**
+     * Creates request options for authenticatorsAdminWebauthnEnrollmentsBeginCreate without sending
+     * the request
+     */
+    async authenticatorsAdminWebauthnEnrollmentsBeginCreateRequestOpts(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsBeginCreateRequest,
+    ): Promise<runtime.RequestOpts> {
+        if (requestParameters["webAuthnEnrollmentBeginRequest"] == null) {
+            throw new runtime.RequiredError(
+                "webAuthnEnrollmentBeginRequest",
+                'Required parameter "webAuthnEnrollmentBeginRequest" was null or undefined when calling authenticatorsAdminWebauthnEnrollmentsBeginCreate().',
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters["Content-Type"] = "application/json";
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("authentik", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        const urlPath = `/authenticators/admin/webauthn-enrollments/begin/`;
+
+        return {
+            path: urlPath,
+            method: "POST",
+            headers: headerParameters,
+            query: queryParameters,
+            body: WebAuthnEnrollmentBeginRequestToJSON(
+                requestParameters["webAuthnEnrollmentBeginRequest"],
+            ),
+        };
+    }
+
+    /**
+     * Return creation options bound to the user, RP and a one-time challenge.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsBeginCreateRaw(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsBeginCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<runtime.ApiResponse<WebAuthnEnrollmentOptions>> {
+        const requestOptions =
+            await this.authenticatorsAdminWebauthnEnrollmentsBeginCreateRequestOpts(
+                requestParameters,
+            );
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) =>
+            WebAuthnEnrollmentOptionsFromJSON(jsonValue),
+        );
+    }
+
+    /**
+     * Return creation options bound to the user, RP and a one-time challenge.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsBeginCreate(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsBeginCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<WebAuthnEnrollmentOptions> {
+        const response = await this.authenticatorsAdminWebauthnEnrollmentsBeginCreateRaw(
+            requestParameters,
+            initOverrides,
+        );
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for authenticatorsAdminWebauthnEnrollmentsCancelCreate without
+     * sending the request
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCancelCreateRequestOpts(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCancelCreateRequest,
+    ): Promise<runtime.RequestOpts> {
+        if (requestParameters["id"] == null) {
+            throw new runtime.RequiredError(
+                "id",
+                'Required parameter "id" was null or undefined when calling authenticatorsAdminWebauthnEnrollmentsCancelCreate().',
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("authentik", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/authenticators/admin/webauthn-enrollments/{id}/cancel/`;
+        urlPath = urlPath.replace("{id}", encodeURIComponent(String(requestParameters["id"])));
+
+        return {
+            path: urlPath,
+            method: "POST",
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Cancel pending enrollment; completed credentials use device revocation.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCancelCreateRaw(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCancelCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<runtime.ApiResponse<WebAuthnEnrollment>> {
+        const requestOptions =
+            await this.authenticatorsAdminWebauthnEnrollmentsCancelCreateRequestOpts(
+                requestParameters,
+            );
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) =>
+            WebAuthnEnrollmentFromJSON(jsonValue),
+        );
+    }
+
+    /**
+     * Cancel pending enrollment; completed credentials use device revocation.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCancelCreate(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCancelCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<WebAuthnEnrollment> {
+        const response = await this.authenticatorsAdminWebauthnEnrollmentsCancelCreateRaw(
+            requestParameters,
+            initOverrides,
+        );
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for authenticatorsAdminWebauthnEnrollmentsCompleteCreate without
+     * sending the request
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCompleteCreateRequestOpts(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCompleteCreateRequest,
+    ): Promise<runtime.RequestOpts> {
+        if (requestParameters["id"] == null) {
+            throw new runtime.RequiredError(
+                "id",
+                'Required parameter "id" was null or undefined when calling authenticatorsAdminWebauthnEnrollmentsCompleteCreate().',
+            );
+        }
+
+        if (requestParameters["webAuthnEnrollmentCompleteRequest"] == null) {
+            throw new runtime.RequiredError(
+                "webAuthnEnrollmentCompleteRequest",
+                'Required parameter "webAuthnEnrollmentCompleteRequest" was null or undefined when calling authenticatorsAdminWebauthnEnrollmentsCompleteCreate().',
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters["Content-Type"] = "application/json";
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("authentik", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/authenticators/admin/webauthn-enrollments/{id}/complete/`;
+        urlPath = urlPath.replace("{id}", encodeURIComponent(String(requestParameters["id"])));
+
+        return {
+            path: urlPath,
+            method: "POST",
+            headers: headerParameters,
+            query: queryParameters,
+            body: WebAuthnEnrollmentCompleteRequestToJSON(
+                requestParameters["webAuthnEnrollmentCompleteRequest"],
+            ),
+        };
+    }
+
+    /**
+     * Verify the attestation and atomically create a real WebAuthnDevice.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCompleteCreateRaw(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCompleteCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<runtime.ApiResponse<WebAuthnEnrollment>> {
+        const requestOptions =
+            await this.authenticatorsAdminWebauthnEnrollmentsCompleteCreateRequestOpts(
+                requestParameters,
+            );
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) =>
+            WebAuthnEnrollmentFromJSON(jsonValue),
+        );
+    }
+
+    /**
+     * Verify the attestation and atomically create a real WebAuthnDevice.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsCompleteCreate(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsCompleteCreateRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<WebAuthnEnrollment> {
+        const response = await this.authenticatorsAdminWebauthnEnrollmentsCompleteCreateRaw(
+            requestParameters,
+            initOverrides,
+        );
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for authenticatorsAdminWebauthnEnrollmentsList without sending the
+     * request
+     */
+    async authenticatorsAdminWebauthnEnrollmentsListRequestOpts(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsListRequest,
+    ): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        if (requestParameters["device"] != null) {
+            queryParameters["device"] = requestParameters["device"];
+        }
+
+        if (requestParameters["page"] != null) {
+            queryParameters["page"] = requestParameters["page"];
+        }
+
+        if (requestParameters["pageSize"] != null) {
+            queryParameters["page_size"] = requestParameters["pageSize"];
+        }
+
+        if (requestParameters["user"] != null) {
+            queryParameters["user"] = requestParameters["user"];
+        }
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("authentik", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        const urlPath = `/authenticators/admin/webauthn-enrollments/`;
+
+        return {
+            path: urlPath,
+            method: "GET",
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
+     * native endpoint checks govern operations and target visibility. Only the initiating caller or
+     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * exists.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsListRaw(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsListRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<runtime.ApiResponse<PaginatedWebAuthnEnrollmentList>> {
+        const requestOptions =
+            await this.authenticatorsAdminWebauthnEnrollmentsListRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) =>
+            PaginatedWebAuthnEnrollmentListFromJSON(jsonValue),
+        );
+    }
+
+    /**
+     * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
+     * native endpoint checks govern operations and target visibility. Only the initiating caller or
+     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * exists.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsList(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsListRequest = {},
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<PaginatedWebAuthnEnrollmentList> {
+        const response = await this.authenticatorsAdminWebauthnEnrollmentsListRaw(
+            requestParameters,
+            initOverrides,
+        );
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for authenticatorsAdminWebauthnEnrollmentsRetrieve without sending
+     * the request
+     */
+    async authenticatorsAdminWebauthnEnrollmentsRetrieveRequestOpts(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsRetrieveRequest,
+    ): Promise<runtime.RequestOpts> {
+        if (requestParameters["id"] == null) {
+            throw new runtime.RequiredError(
+                "id",
+                'Required parameter "id" was null or undefined when calling authenticatorsAdminWebauthnEnrollmentsRetrieve().',
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("authentik", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/authenticators/admin/webauthn-enrollments/{id}/`;
+        urlPath = urlPath.replace("{id}", encodeURIComponent(String(requestParameters["id"])));
+
+        return {
+            path: urlPath,
+            method: "GET",
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
+     * native endpoint checks govern operations and target visibility. Only the initiating caller or
+     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * exists.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsRetrieveRaw(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsRetrieveRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<runtime.ApiResponse<WebAuthnEnrollment>> {
+        const requestOptions =
+            await this.authenticatorsAdminWebauthnEnrollmentsRetrieveRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) =>
+            WebAuthnEnrollmentFromJSON(jsonValue),
+        );
+    }
+
+    /**
+     * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
+     * native endpoint checks govern operations and target visibility. Only the initiating caller or
+     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * exists.
+     */
+    async authenticatorsAdminWebauthnEnrollmentsRetrieve(
+        requestParameters: AuthenticatorsAdminWebauthnEnrollmentsRetrieveRequest,
+        initOverrides?: RequestInit | runtime.InitOverrideFunction,
+    ): Promise<WebAuthnEnrollment> {
+        const response = await this.authenticatorsAdminWebauthnEnrollmentsRetrieveRaw(
+            requestParameters,
+            initOverrides,
+        );
+        return await response.value();
     }
 
     /**

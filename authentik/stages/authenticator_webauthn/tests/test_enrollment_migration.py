@@ -6,6 +6,7 @@ from django.test import TransactionTestCase
 from webauthn.authentication.verify_authentication_response import verify_authentication_response
 from webauthn.helpers.base64url_to_bytes import base64url_to_bytes
 from webauthn.helpers.bytes_to_base64url import bytes_to_base64url
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
 
 from authentik.core.tests.utils import create_test_user
 from authentik.stages.authenticator_webauthn.tests.credentials import SoftwareCredential
@@ -22,7 +23,11 @@ class TestEnrollmentMigration(TransactionTestCase):
         try:
             user = create_test_user()
             old = executor.loader.project_state(previous).apps.get_model(app, "WebAuthnDevice")
-            credential = SoftwareCredential(rp_id="testserver", origin="https://testserver")
+            credential = SoftwareCredential(
+                rp_id="testserver",
+                origin="https://testserver",
+                alg=COSEAlgorithmIdentifier.ECDSA_SHA_256,
+            )
             credential.sign_count = 42
             values = {
                 "user_id": user.pk,

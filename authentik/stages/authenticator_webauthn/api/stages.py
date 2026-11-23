@@ -1,5 +1,7 @@
 """AuthenticatorWebAuthnStage API Views"""
 
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 from rest_framework.viewsets import ModelViewSet
 
 from authentik.core.api.used_by import UsedByMixin
@@ -47,3 +49,10 @@ class AuthenticatorWebAuthnStageViewSet(UsedByMixin, ModelViewSet):
     ]
     ordering = ["name"]
     search_fields = ["name"]
+
+    def perform_destroy(self, instance):
+        # Serialize deletion with enrollment begin before Django collects related
+        # records. A late insertion must not escape the collector's SET_NULL update.
+        with transaction.atomic():
+            instance = get_object_or_404(self.get_queryset().select_for_update(), pk=instance.pk)
+            super().perform_destroy(instance)
