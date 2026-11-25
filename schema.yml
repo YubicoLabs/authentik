@@ -1542,7 +1542,7 @@ paths:
         Prepare, verify and cancel enrollment on behalf of an existing user.
 
         Model permissions and native endpoint checks govern operations and target
-        visibility. Only the initiating caller or a superuser can manage an attempt.
+        visibility. Only the initiating caller or a superuser can complete an attempt.
         No raw credential-create or transaction-update endpoint exists.
       parameters:
       - in: query
@@ -1577,7 +1577,7 @@ paths:
         Prepare, verify and cancel enrollment on behalf of an existing user.
 
         Model permissions and native endpoint checks govern operations and target
-        visibility. Only the initiating caller or a superuser can manage an attempt.
+        visibility. Only the initiating caller or a superuser can complete an attempt.
         No raw credential-create or transaction-update endpoint exists.
       parameters:
       - in: path
@@ -38560,6 +38560,9 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'
@@ -38616,6 +38619,10 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          minLength: 1
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'
@@ -41754,6 +41761,10 @@ components:
       - access_request_approved
       - access_request_denied
       - access_request_revoked
+      - webauthn_enrollment_started
+      - webauthn_enrollment_completed
+      - webauthn_enrollment_cancelled
+      - webauthn_enrollment_expired
       - custom_
       type: string
     EventMatcherPolicy:
@@ -51786,6 +51797,10 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          minLength: 1
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'

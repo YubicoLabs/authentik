@@ -13,23 +13,31 @@ Delegated enrollment lets an authorized integration create a WebAuthn credential
 - A [service account](../../../../users-sources/user/account-types/service-accounts.mdx) with an API token and the permissions described below.
 - An authentication flow that accepts WebAuthn credentials through the [Authenticator Validation stage](../authenticator_validate/index.mdx).
 
-## Configure the enrollment origin and lifetime
+## Configure the login domain and enrollment lifetime
 
-Set these values through authentik's [configuration](../../../../install-config/configuration/configuration.mdx) and apply the deployment configuration to each server instance:
+Configure the enrollment client to call authentik through the domain where the user
+will sign in. authentik derives the relying-party ID and primary origin from the
+request using the same helpers as interactive enrollment. Pending completion and
+begin retries must use that same domain and origin. Configure trusted proxies using
+authentik’s normal deployment settings; an internal service hostname is not a
+substitute for the login domain.
+
+In the selected WebAuthn setup stage, set **Delegated enrollment timeout**. The
+default is `minutes=5`. Use a positive duration in authentik’s timedelta format,
+such as `hours=1`; fractional seconds are supported. Changes apply to new attempts
+and do not extend an issued deadline. Choose a duration appropriate for the
+provisioning workflow, separate from shipping time or a browser prompt timeout.
+
+Record retention is configured separately:
 
 ```yaml
-AUTHENTIK_WEBAUTHN_ENROLLMENT__ORIGIN: https://authentik.company
-AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS: 300
 AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS: 30
 ```
 
-The origin is required. Use an HTTPS origin without a path, query, credentials, or fragment. HTTP is accepted only for `localhost` development. The RP ID is the origin's hostname, without its scheme or port. Choose a domain that is compatible with the user's intended authentik login; changing it can prevent the resulting credential from being used there.
-
-The lifetime defaults to five minutes. Set a positive whole number of seconds that produces a representable expiration date. The server sets the deadline at begin; retrying does not extend it. Configure the shortest lifetime that supports the enrollment process. Increasing it increases the time during which an outstanding response can complete enrollment.
-
-The enrollment deadline controls credential submission; record retention is configured separately below.
-
-Enrollment requests are runtime records and are excluded from blueprint import and export. Use the enrollment API to manage them. WebAuthn stages remain configurable through blueprints.
+Records remain available for authorized status lookup and completed-response recovery
+until this period after the enrollment deadline. Cleanup does not delete credentials.
+Retention changes apply to newly issued records. Expired retained idempotency keys
+return an error directing the caller to use a new key; physical cleanup permits reuse.
 
 ## Grant permissions to the service account
 
@@ -41,13 +49,13 @@ Create a dedicated [role](../../../../users-sources/roles/manage_roles.mdx), ass
 | `add_webauthnenrollment`                                | Begin an attempt              |
 | `change_webauthnenrollment`                             | Complete or cancel an attempt |
 
-Grant `authentik_core.enroll_user_webauthn` for each user the service account may enroll. This permission is checked at both begin and completion, including successful retries. A global grant authorizes enrollment for all otherwise accessible users. Viewing a user or having permission to create devices does not grant this authority.
+Grant `authentik_core.enroll_user_webauthn` for each user the service account may enroll. This permission is checked at both begin and completion, including successful retries. A global grant authorizes enrollment for otherwise accessible users, but only a superuser may enroll an authenticator for another superuser. This restriction is checked again at completion and on completed-response retries, including when the target becomes a superuser after the request begins. Viewing a user or having permission to create devices does not grant this authority.
 
 Grant `authentik_core.view_user` for the intended target users and `authentik_stages_authenticator_webauthn.view_authenticatorwebauthnstage` for the selected stage. Prefer object permissions when the account should not access every user or stage. Do not grant superuser access for this integration.
 
-[Create an API token](../../../../users-sources/user/account-types/service-accounts.mdx#create-an-api-token) belonging to that service account, rather than using its generated app password. Send the token in the `Authorization: Bearer <api_token>` header and keep it out of client-side browser code and logs. Replacing a token for the same account preserves access to its attempts; a different service account does not inherit them. Deleting the initiating account preserves its enrollment records and any enrolled credentials. A replacement service account cannot access those requests. A superuser can inspect or cancel retained requests, and can complete a pending request if its deadline and policy still permit enrollment.
+[Create an API token](../../../../users-sources/user/account-types/service-accounts.mdx#create-an-api-token) belonging to that service account, rather than using its generated app password. Send the token in the `Authorization: Bearer <api_token>` header and keep it out of client-side browser code and logs. Replacing a token for the same account preserves completion ownership. Deleting the initiating account preserves its enrollment records and enrolled credentials. Another account with the required administrative permissions can inspect or cancel retained requests, but only a superuser can complete a request whose initiating account has been deleted. Completion still requires a valid deadline and current enrollment authority.
 
-[Custom permission checks](../../../../users-sources/access-control/custom_permissions.mdx), when enabled, also govern API access and target visibility. The initiating account owns its enrollment attempts; ordinary object grants or custom list widening do not transfer another account's attempts. Superusers can manage all attempts.
+[Custom permission checks](../../../../users-sources/access-control/custom_permissions.mdx), when enabled, also govern API access and target visibility. List, retrieve, and cancel use the native permission-filtered queryset. Global enrollment view/change grants can therefore allow administrators and service accounts to inspect or cancel attempts created by another account. Completion remains restricted to the initiating account or a superuser; object grants and custom list widening do not transfer completion ownership.
 
 Custom field-hiding rules apply to standard list and retrieve responses, including effective expiry status. authentik does not expose the `hidden_fields` hook for custom actions such as `begin`; use operation permissions to control access to creation options. Superusers retain authentik's exemption from custom permission checks.
 
@@ -61,9 +69,9 @@ An issuer that loses enrollment authority can still inspect or cancel its own pe
 
 The selected stage supplies user verification, resident-key requirements, authenticator attachment, hints, and device-type restrictions. For discoverable credentials, choose the appropriate resident-key requirement. See the [stage settings](./index.mdx#configuration-options).
 
-Begin captures the creation options and device-type restrictions for that attempt. Changes to these stage settings affect new attempts. Completion still checks current caller authority, target-user access, stage availability, and supported algorithms. Cancel outstanding attempts if their issued policy is no longer acceptable.
+Begin captures the creation options for that attempt. Completion checks the stage’s current device-type restrictions and requires user verification if either the issued options or the current stage requires it. Only algorithms offered at begin and still supported at completion are accepted. Caller authority, target-user access and stage availability are checked again. Interactive registration and delegated enrollment share option generation, verification and device naming.
 
-The stage's **Additional accepted origins** setting applies to interactive registration. Delegated enrollment verifies only the server-configured origin saved on the attempt; it does not inherit that list. Configure authentication origins separately on the Authenticator Validation stage when needed.
+The stage’s current **Additional accepted origins** apply to both interactive and delegated registration. Add the enrollment client’s actual ceremony origin when it differs from the primary origin. Removing an origin prevents pending proofs from that origin from completing; adding one explicitly trusts it. Configure authentication origins separately on the Authenticator Validation stage when needed.
 
 This API does not run the stage's interactive flow, its maximum-registration-attempt counter, or its configuration flow. It requests direct attestation and verifies the response using authentik's WebAuthn verifier. Device-type restrictions are not a substitute for an independently established attestation trust policy.
 
@@ -114,7 +122,7 @@ Successful completion returns HTTP 200 with `status` equal to `completed` and `d
 
 1. Read `GET /api/v3/authenticators/admin/webauthn-enrollments/<enrollment_id>/` and confirm the completed state and device ID.
 2. Start a fresh user login session for the configured domain and authenticate with the newly enrolled credential. Completion alone does not prove that the user's login flow accepts it.
-3. Confirm that an account without the required permissions cannot enroll for the target user or access another issuer's attempt.
+3. Confirm that an account without the required permissions cannot enroll for the target user, and that a different non-superuser account cannot complete the attempt.
 
 ## Handle failures and cancellation
 
@@ -143,3 +151,5 @@ Set `AUTHENTIK_WEBAUTHN_ENROLLMENT__RETENTION_DAYS` to a nonnegative whole numbe
 After retention ends, list and detail requests no longer expose the record, and completion retries return HTTP 404. authentik's scheduled expired-model cleanup removes the record without deleting the enrolled credential. Cleanup is asynchronous. Until it runs, beginning with the same account and request key returns `enrollment_expired`; after removal, that key can identify a new attempt. Always use a new request key for a new enrollment.
 
 These records support status checks and retries. They are not a permanent audit archive. Enrollment audit events follow authentik's existing event retention policy.
+
+Enrollment emits the native event actions `webauthn_enrollment_started`, `webauthn_enrollment_completed`, `webauthn_enrollment_cancelled`, and `webauthn_enrollment_expired`. Expiry is recorded when an operation observes and persists it; this is not a scheduled expiry notification.

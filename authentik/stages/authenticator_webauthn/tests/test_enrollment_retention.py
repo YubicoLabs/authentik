@@ -16,7 +16,6 @@ from authentik.stages.authenticator_webauthn.tests import test_enrollment as hel
 
 class TestEnrollmentRetention(APITestCase):
     setUp = helpers.TestWebAuthnEnrollment.setUp
-    tearDown = helpers.TestWebAuthnEnrollment.tearDown
     begin = helpers.TestWebAuthnEnrollment.begin
     complete = helpers.TestWebAuthnEnrollment.complete
     credential_response = helpers.TestWebAuthnEnrollment.credential_response

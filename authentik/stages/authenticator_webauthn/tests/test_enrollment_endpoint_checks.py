@@ -99,7 +99,10 @@ class TestEnrollmentEndpointChecks(APITestCase):
         )
         listed = self.client.get(reverse("authentik_api:admin-webauthnenrollment-list"))
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual([str(item["pk"]) for item in listed.data["results"]], [str(owned["pk"])])
+        self.assertCountEqual(
+            [str(item["pk"]) for item in listed.data["results"]],
+            [str(owned["pk"]), str(other.data["pk"])],
+        )
         for action in ("detail", "complete", "cancel"):
             with self.subTest(action=action):
                 url = reverse(
@@ -113,9 +116,8 @@ class TestEnrollmentEndpointChecks(APITestCase):
                         url, self.body if action == "complete" else {}, format="json"
                     )
                 )
-                self.assertEqual(response.status_code, 404)
-        # The explicit administrator override can grant this caller's own action,
-        # but cannot make another issuer's enrollment addressable.
+                self.assertEqual(response.status_code, 404 if action == "complete" else 200)
+        # An explicit administrator override does not transfer completion ownership.
         self.assertEqual(self.complete().status_code, 200)
 
     def test_request_check_can_deny_begin_despite_role_grants(self):

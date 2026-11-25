@@ -3895,7 +3895,7 @@ export class AuthenticatorsApi extends runtime.BaseAPI {
     /**
      * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
      * native endpoint checks govern operations and target visibility. Only the initiating caller or
-     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * a superuser can complete an attempt. No raw credential-create or transaction-update endpoint
      * exists.
      */
     async authenticatorsAdminWebauthnEnrollmentsListRaw(
@@ -3914,7 +3914,7 @@ export class AuthenticatorsApi extends runtime.BaseAPI {
     /**
      * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
      * native endpoint checks govern operations and target visibility. Only the initiating caller or
-     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * a superuser can complete an attempt. No raw credential-create or transaction-update endpoint
      * exists.
      */
     async authenticatorsAdminWebauthnEnrollmentsList(
@@ -3969,7 +3969,7 @@ export class AuthenticatorsApi extends runtime.BaseAPI {
     /**
      * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
      * native endpoint checks govern operations and target visibility. Only the initiating caller or
-     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * a superuser can complete an attempt. No raw credential-create or transaction-update endpoint
      * exists.
      */
     async authenticatorsAdminWebauthnEnrollmentsRetrieveRaw(
@@ -3988,7 +3988,7 @@ export class AuthenticatorsApi extends runtime.BaseAPI {
     /**
      * Prepare, verify and cancel enrollment on behalf of an existing user. Model permissions and
      * native endpoint checks govern operations and target visibility. Only the initiating caller or
-     * a superuser can manage an attempt. No raw credential-create or transaction-update endpoint
+     * a superuser can complete an attempt. No raw credential-create or transaction-update endpoint
      * exists.
      */
     async authenticatorsAdminWebauthnEnrollmentsRetrieve(

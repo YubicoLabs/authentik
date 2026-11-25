@@ -22,7 +22,10 @@ from authentik.lib.models import (
     SimpleThroughModel,
 )
 from authentik.stages.authenticator.models import Device
-from authentik.stages.authenticator_webauthn.utils import validate_webauthn_origin
+from authentik.stages.authenticator_webauthn.utils import (
+    validate_delegated_enrollment_timeout,
+    validate_webauthn_origin,
+)
 
 UNKNOWN_DEVICE_TYPE_AAGUID = "00000000-0000-0000-0000-000000000000"
 
@@ -97,6 +100,12 @@ class WebAuthnHint(models.TextChoices):
 
 class AuthenticatorWebAuthnStage(ConfigurableStage, FriendlyNamedStage, Stage):
     """Setup WebAuthn-based authentication for the user."""
+
+    delegated_enrollment_timeout = models.TextField(
+        default="minutes=5",
+        validators=[validate_delegated_enrollment_timeout],
+        help_text=_("How long a delegated enrollment may remain pending."),
+    )
 
     user_verification = models.TextField(
         choices=UserVerification.choices,
@@ -240,7 +249,6 @@ class WebAuthnEnrollment(InternallyManagedMixin, ExpiringModel, SerializerModel)
     stage = models.ForeignKey(AuthenticatorWebAuthnStage, on_delete=models.SET_NULL, null=True)
     challenge = models.TextField()
     registration_options = models.JSONField(default=dict)
-    allowed_aaguids = models.JSONField(default=list)
     response_digest = models.CharField(max_length=64, blank=True)
     device = models.ForeignKey(WebAuthnDevice, on_delete=models.SET_NULL, null=True, default=None)
     rp_id = models.CharField(max_length=253)

@@ -98,6 +98,20 @@ export class AuthenticatorWebAuthnStageForm extends BaseStageForm<AuthenticatorW
             </ak-form-element-horizontal>
             <ak-form-group open label="${msg("Stage-specific settings")}">
                 <div class="pf-c-form">
+                    <ak-form-element-horizontal
+                        label=${msg("Delegated enrollment timeout", { id: "webauthn.delegated-enrollment.timeout.label" })}
+                        required
+                        name="delegatedEnrollmentTimeout"
+                    >
+                        <input
+                            type="text"
+                            class="pf-c-form-control"
+                            value=${this.instance?.delegatedEnrollmentTimeout ?? "minutes=5"}
+                        />
+                        <p class="pf-c-form__helper-text">
+                            ${msg("How long a delegated enrollment may remain pending. For example, minutes=5. Changes apply to new attempts.", { id: "webauthn.delegated-enrollment.timeout.description" })}
+                        </p>
+                    </ak-form-element-horizontal>
                     ${additionalAcceptedOriginsField(
                         "additionalAcceptedOrigins",
                         this.instance?.additionalAcceptedOrigins,

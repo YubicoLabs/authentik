@@ -26,6 +26,7 @@ from django.utils.timezone import now
 from fido2 import cbor
 from fido2.cose import ES256
 from fido2.webauthn import AttestationObject, AttestedCredentialData, AuthenticatorData
+from freezegun import freeze_time
 from rest_framework.test import APITestCase
 from webauthn.helpers.base64url_to_bytes import base64url_to_bytes
 from webauthn.helpers.bytes_to_base64url import bytes_to_base64url
@@ -33,7 +34,6 @@ from webauthn.helpers.cose import COSEAlgorithmIdentifier
 
 from authentik.core.models import UserTypes
 from authentik.core.tests.utils import create_test_admin_user, create_test_user
-from authentik.lib.config import CONFIG, UNSET
 from authentik.lib.generators import generate_id
 from authentik.stages.authenticator_webauthn.models import (
     UNKNOWN_DEVICE_TYPE_AAGUID,
@@ -108,24 +108,10 @@ class TestWebAuthnEnrollment(APITestCase):
     """The connector may transport a ceremony, but never bypass its verification."""
 
     def setUp(self):
-        self.previous_ttl = CONFIG.get("webauthn_enrollment.ttl_seconds", default=UNSET)
-        CONFIG.delete("webauthn_enrollment.ttl_seconds")
-        self.previous_origin = CONFIG.get("webauthn_enrollment.origin", default=UNSET)
-        CONFIG.set("webauthn_enrollment.origin", "https://testserver")
         self.admin = create_test_admin_user()
         self.user = create_test_user()
         self.stage = AuthenticatorWebAuthnStage.objects.create(name=generate_id())
         self.client.force_login(self.admin)
-
-    def tearDown(self):
-        if self.previous_ttl is UNSET:
-            CONFIG.delete("webauthn_enrollment.ttl_seconds")
-        else:
-            CONFIG.set("webauthn_enrollment.ttl_seconds", self.previous_ttl)
-        if self.previous_origin is UNSET:
-            CONFIG.delete("webauthn_enrollment.origin")
-        else:
-            CONFIG.set("webauthn_enrollment.origin", self.previous_origin)
 
     def begin(self, *, user=None, stage=None, key="request-1", **extra):
         return self.client.post(
@@ -167,8 +153,7 @@ class TestWebAuthnEnrollment(APITestCase):
     def test_valid_origin_longer_than_default_url_field_storage(self):
         origin = "https://" + ".".join(["a" * 60] * 3 + ["example", "com"]) + ":8443"
         self.assertGreater(len(origin), 200)
-        CONFIG.set("webauthn_enrollment.origin", origin)
-        begun = self.begin()
+        begun = self.begin(secure=True, HTTP_HOST=origin.removeprefix("https://"))
         self.assertEqual(begun.status_code, 201)
         self.assertEqual(begun.data["origin"], origin)
 
@@ -187,7 +172,7 @@ class TestWebAuthnEnrollment(APITestCase):
         self.assertEqual(self.complete(begun.data["pk"], response).status_code, 200)
         events = self.client.get(
             reverse("authentik_api:event-list"),
-            {"action": "custom_webauthn_enrollment_completed"},
+            {"action": "webauthn_enrollment_completed"},
         )
         self.assertEqual(events.status_code, 200)
         matching = [
@@ -234,7 +219,7 @@ class TestWebAuthnEnrollment(APITestCase):
     def test_completion_rejects_an_algorithm_not_offered_at_begin(self):
         # Model a deployment broadening its supported algorithms between requests.
         with patch(
-            "authentik.stages.authenticator_webauthn.api.enrollment.supported_pub_key_algs",
+            "authentik.stages.authenticator_webauthn.registration.supported_pub_key_algs",
             return_value=[COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256],
         ):
             begun = self.begin()
@@ -264,7 +249,7 @@ class TestWebAuthnEnrollment(APITestCase):
             with (
                 self.subTest(algorithms=algorithms),
                 patch(
-                    "authentik.stages.authenticator_webauthn.api.enrollment.supported_pub_key_algs",
+                    "authentik.stages.authenticator_webauthn.registration.supported_pub_key_algs",
                     return_value=algorithms,
                 ),
             ):
@@ -304,7 +289,8 @@ class TestWebAuthnEnrollment(APITestCase):
         ):
             with self.subTest(seconds=seconds):
                 if configured is not None:
-                    CONFIG.set("webauthn_enrollment.ttl_seconds", configured)
+                    self.stage.delegated_enrollment_timeout = f"seconds={configured}"
+                    self.stage.save(update_fields=["delegated_enrollment_timeout"])
                 before = now()
                 begun = self.begin(key=f"ttl-{seconds}")
                 after = now()
@@ -381,36 +367,29 @@ class TestWebAuthnEnrollment(APITestCase):
     def test_invalid_lifetime_rejects_enrollment(self):
         for value in (0, -1, 10**30, "invalid"):
             with self.subTest(value=value):
-                CONFIG.set("webauthn_enrollment.ttl_seconds", value)
+                self.stage.delegated_enrollment_timeout = f"seconds={value}"
+                self.stage.save(update_fields=["delegated_enrollment_timeout"])
                 begun = self.begin(key=f"invalid-{value}")
                 self.assertEqual(begun.status_code, 400)
                 self.assertFalse(WebAuthnEnrollment.objects.exists())
 
     def test_config_change_does_not_extend_existing_ceremony(self):
         begun = self.begin()
-        CONFIG.set("webauthn_enrollment.ttl_seconds", 3600)
+        self.stage.delegated_enrollment_timeout = "hours=1"
+        self.stage.save(update_fields=["delegated_enrollment_timeout"])
         retried = self.begin()
         self.assertEqual(retried.status_code, 201)
         self.assertEqual(retried.data["pk"], begun.data["pk"])
         self.assertEqual(retried.data["expires"], begun.data["expires"])
         self.assertEqual(retried.data["registration"], begun.data["registration"])
 
-    def test_non_integer_lifetime_is_actionable_and_does_not_issue_an_attempt(self):
-        setting = "webauthn_enrollment.ttl_seconds"
-        for index, value in enumerate(
-            (300.5, 300.0, True, None, "３００", "300_000", " 300 ", "+300")
-        ):
-            with self.subTest(value=value):
-                CONFIG.set(setting, value)
-                rejected = self.begin(key=f"invalid-lifetime-{index}")
-                self.assertEqual(rejected.status_code, 400)
-                self.assertIn("AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS", str(rejected.data))
-                listed = self.client.get(reverse("authentik_api:admin-webauthnenrollment-list"))
-                self.assertEqual(listed.status_code, 200)
-                self.assertEqual(listed.data["results"], [])
-        CONFIG.set(setting, "300")
-        recovered = self.begin(key="invalid-lifetime-0")
-        self.assertEqual(recovered.status_code, 201)
+    def test_fractional_lifetime_is_supported(self):
+        self.stage.delegated_enrollment_timeout = "seconds=0.5"
+        self.stage.save(update_fields=["delegated_enrollment_timeout"])
+        with freeze_time("2026-11-25T12:00:00Z"):
+            begun = self.begin()
+        self.assertEqual(begun.status_code, 201)
+        self.assertEqual(begun.data["expires"], "2026-11-25T12:00:00.500000Z")
 
     def test_complete_accepts_valid_packed_es256_attestation_and_persists_device(self):
         begun = self.begin()
@@ -433,28 +412,6 @@ class TestWebAuthnEnrollment(APITestCase):
                 cbor.encode(ES256.from_cryptography_key(credential.private_key.public_key()))
             ),
         )
-
-    def test_begin_requires_a_configured_origin_and_ignores_connector_host_header(self):
-        CONFIG.delete("webauthn_enrollment.origin")
-        self.assertEqual(self.begin().status_code, 400)
-
-        CONFIG.set("webauthn_enrollment.origin", "https://testserver")
-        begun = self.begin(key="fixed-origin", HTTP_HOST="localhost:9000")
-        self.assertEqual(begun.status_code, 201)
-        self.assertEqual(begun.data["origin"], "https://testserver")
-        self.assertEqual(begun.data["rp_id"], "testserver")
-        self.assertEqual(begun.data["registration"]["rp"]["id"], "testserver")
-
-    def test_malformed_origin_configuration_is_rejected_and_correctable(self):
-        for origin in ("https://[broken", "https://testserver:invalid", "https://testserver:65536"):
-            with self.subTest(origin=origin):
-                CONFIG.set("webauthn_enrollment.origin", origin)
-                self.assertEqual(self.begin().status_code, 400)
-        CONFIG.set("webauthn_enrollment.origin", "https://testserver:8443")
-        begun = self.begin()
-        self.assertEqual(begun.status_code, 201)
-        self.assertEqual(begun.data["origin"], "https://testserver:8443")
-        self.assertEqual(begun.data["rp_id"], "testserver")
 
     def test_certificate_backed_attestation_checks_signature_and_allows_corrected_retry(self):
         begun = self.begin()
@@ -547,7 +504,7 @@ class TestWebAuthnEnrollment(APITestCase):
                 self.assertEqual(response.status_code, 400)
         self.assertFalse(WebAuthnDevice.objects.filter(user=self.user).exists())
 
-    def test_interactive_origin_allowlist_does_not_widen_delegated_origin(self):
+    def test_additional_origin_allowlist_applies_to_delegated_enrollment(self):
         self.stage.additional_accepted_origins = ["https://native-client.example"]
         self.stage.save(update_fields=["additional_accepted_origins"])
         begun = self.begin()
@@ -559,11 +516,9 @@ class TestWebAuthnEnrollment(APITestCase):
             self.complete(
                 begun.data["pk"], credential.registration_response(challenge)
             ).status_code,
-            400,
+            200,
         )
-        self.assertFalse(WebAuthnDevice.objects.filter(user=self.user).exists())
-        _, response = self.credential_response(begun)
-        self.assertEqual(self.complete(begun.data["pk"], response).status_code, 200)
+        self.assertTrue(WebAuthnDevice.objects.filter(user=self.user).exists())
 
     def test_complete_requires_uv_when_stage_requires_it(self):
         self.stage.user_verification = "required"
@@ -596,19 +551,17 @@ class TestWebAuthnEnrollment(APITestCase):
         self.assertEqual(self.complete(second.data["pk"], duplicate).status_code, 400)
         self.assertEqual(WebAuthnDevice.objects.filter(user=self.user).count(), 1)
 
-    def test_completion_uses_the_begin_policy_snapshot(self):
+    def test_completion_enforces_current_required_user_verification(self):
         self.stage.user_verification = "discouraged"
         self.stage.save(update_fields=["user_verification"])
         begun = self.begin(key="policy-snapshot")
 
-        # Tightening the mutable stage after delivery starts must not invalidate its issued
-        # registration request. The immutable request snapshot says UV was discouraged.
         self.stage.user_verification = "required"
         self.stage.save(update_fields=["user_verification"])
         _, attestation = self.credential_response(begun, user_verified=False)
-        self.assertEqual(self.complete(begun.data["pk"], attestation).status_code, 200)
+        self.assertEqual(self.complete(begun.data["pk"], attestation).status_code, 400)
 
-    def test_aaguid_allowlist_snapshot_accepts_credential_allowed_at_begin(self):
+    def test_current_aaguid_restrictions_reject_previously_allowed_credential(self):
         allowed_aaguid = "11111111-1111-1111-1111-111111111111"
         replacement_aaguid = "22222222-2222-2222-2222-222222222222"
         allowed_type = WebAuthnDeviceType.objects.create(
@@ -619,10 +572,7 @@ class TestWebAuthnEnrollment(APITestCase):
         )
         self.stage.device_type_restrictions.set([allowed_type])
         begun = self.begin(key="aaguid-accept-snapshot")
-        record = WebAuthnEnrollment.objects.get(pk=begun.data["pk"])
-        self.assertEqual(record.allowed_aaguids, [allowed_aaguid])
 
-        # Changing the stage later cannot change this ceremony's allowlist.
         self.stage.device_type_restrictions.set([replacement_type])
         credential = SoftwareES256Credential(
             begun.data["registration"]["rp"]["id"], begun.data["origin"], allowed_aaguid
@@ -632,10 +582,10 @@ class TestWebAuthnEnrollment(APITestCase):
             self.complete(
                 begun.data["pk"], credential.registration_response(challenge)
             ).status_code,
-            200,
+            400,
         )
 
-    def test_aaguid_allowlist_snapshot_rejects_credential_disallowed_at_begin(self):
+    def test_current_aaguid_restrictions_allow_newly_permitted_credential(self):
         allowed_aaguid = "33333333-3333-3333-3333-333333333333"
         later_aaguid = "44444444-4444-4444-4444-444444444444"
         allowed_type = WebAuthnDeviceType.objects.create(
@@ -643,10 +593,7 @@ class TestWebAuthnEnrollment(APITestCase):
         )
         self.stage.device_type_restrictions.set([allowed_type])
         begun = self.begin(key="aaguid-reject-snapshot")
-        record = WebAuthnEnrollment.objects.get(pk=begun.data["pk"])
-        self.assertEqual(record.allowed_aaguids, [allowed_aaguid])
 
-        # Relaxing the mutable stage later must not permit a different authenticator.
         self.stage.device_type_restrictions.clear()
         credential = SoftwareES256Credential(
             begun.data["registration"]["rp"]["id"], begun.data["origin"], later_aaguid
@@ -656,9 +603,9 @@ class TestWebAuthnEnrollment(APITestCase):
             self.complete(
                 begun.data["pk"], credential.registration_response(challenge)
             ).status_code,
-            400,
+            200,
         )
-        self.assertFalse(WebAuthnDevice.objects.filter(user=self.user).exists())
+        self.assertTrue(WebAuthnDevice.objects.filter(user=self.user).exists())
 
     def test_expired_or_cancelled_ceremony_cannot_persist_a_device(self):
         expired = self.begin(key="expired")
@@ -804,7 +751,7 @@ class TestWebAuthnEnrollment(APITestCase):
         self.assertEqual(devices.data["pagination"]["count"], 2)
         self.assertEqual({device["pk"] for device in devices.data["results"]}, completed_ids)
 
-    def test_scoped_service_caller_can_only_manage_its_own_authorized_request(self):
+    def test_scoped_service_caller_cannot_complete_another_issuers_request(self):
         service_caller = create_test_user(type=UserTypes.SERVICE_ACCOUNT)
         other_caller = create_test_user(type=UserTypes.SERVICE_ACCOUNT)
         for caller in (service_caller, other_caller):
@@ -829,8 +776,7 @@ class TestWebAuthnEnrollment(APITestCase):
         begun = self.begin(key="scoped")
         self.assertEqual(begun.status_code, 201)
 
-        # A different, fully model-authorized connector cannot retrieve or complete a request
-        # it did not create, even if it is later granted target access.
+        # Global administrative grants allow inspection/cancellation, not completion ownership.
         other_caller.assign_perms_to_managed_role("authentik_core.view_user", self.user)
         other_caller.assign_perms_to_managed_role(
             "authentik_stages_authenticator_webauthn.view_authenticatorwebauthnstage",
@@ -840,25 +786,22 @@ class TestWebAuthnEnrollment(APITestCase):
         detail_url = reverse(
             "authentik_api:admin-webauthnenrollment-detail", kwargs={"pk": begun.data["pk"]}
         )
-        self.assertEqual(self.client.get(detail_url).status_code, 404)
+        self.assertEqual(self.client.get(detail_url).status_code, 200)
         _, attestation = self.credential_response(begun)
         self.assertEqual(self.complete(begun.data["pk"], attestation).status_code, 404)
         cancel_url = reverse(
             "authentik_api:admin-webauthnenrollment-cancel", kwargs={"pk": begun.data["pk"]}
         )
-        self.assertEqual(self.client.post(cancel_url).status_code, 404)
+        self.assertEqual(self.client.post(cancel_url).status_code, 200)
         listed = self.client.get(reverse("authentik_api:admin-webauthnenrollment-list"))
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(listed.data["pagination"]["count"], 0)
-        self.assertEqual(listed.data["results"], [])
+        self.assertEqual(listed.data["pagination"]["count"], 1)
+        self.assertEqual(str(listed.data["results"][0]["pk"]), str(begun.data["pk"]))
 
-        # Unauthorized operations must not consume or cancel the rightful caller's attempt.
+        # Administrative cancellation also prevents the original issuer from completing.
         self.client.force_login(service_caller)
         inspected = self.client.get(detail_url)
         self.assertEqual(inspected.status_code, 200)
-        self.assertEqual(inspected.data["status"], "pending")
+        self.assertEqual(inspected.data["status"], "cancelled")
         self.assertIsNone(inspected.data["device"])
-        completed = self.complete(begun.data["pk"], attestation)
-        self.assertEqual(completed.status_code, 200)
-        self.assertEqual(completed.data["status"], "completed")
-        self.assertIsNotNone(completed.data["device"])
+        self.assertEqual(self.complete(begun.data["pk"], attestation).status_code, 400)

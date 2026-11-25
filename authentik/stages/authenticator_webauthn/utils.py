@@ -1,8 +1,13 @@
 """webauthn utils"""
 
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
 from django.http import HttpRequest
+from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
+
+from authentik.lib.utils.time import timedelta_from_string, timedelta_string_validator
 
 
 def validate_webauthn_origin(value: str) -> None:
@@ -34,3 +39,17 @@ def get_origin(request: HttpRequest) -> str:
 def get_expected_origins(request: HttpRequest, additional_origins: list[str]) -> list[str]:
     """Retain the request origin and add explicitly trusted ceremony origins."""
     return list(dict.fromkeys([get_origin(request), *additional_origins]))
+
+
+def validate_delegated_enrollment_timeout(value: str) -> None:
+    """Require a positive duration whose deadline can be represented."""
+    timedelta_string_validator(value)
+    try:
+        duration = timedelta_from_string(value)
+        if duration <= timedelta(0):
+            raise ValueError("Nonpositive enrollment duration")
+        now() + duration
+    except (ValueError, OverflowError) as exc:
+        raise ValidationError(
+            _("Enter an enrollment duration greater than zero that produces a valid deadline.")
+        ) from exc

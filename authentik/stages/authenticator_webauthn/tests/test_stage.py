@@ -30,6 +30,7 @@ from authentik.stages.authenticator_webauthn.models import (
 from authentik.stages.authenticator_webauthn.stage import PLAN_CONTEXT_WEBAUTHN_CHALLENGE
 from authentik.stages.authenticator_webauthn.tasks import webauthn_mds_import
 from authentik.stages.authenticator_webauthn.tests.credentials import SoftwareCredential
+from authentik.stages.authenticator_webauthn.tests.test_enrollment import SoftwareES256Credential
 from authentik.stages.dummy.models import DummyStage
 
 
@@ -312,7 +313,7 @@ class TestAuthenticatorWebAuthnStage(APIFlowTestCase):
             aaguid="00000000-0000-0000-0000-000000000000",
         )
         with patch(
-            "authentik.stages.authenticator_webauthn.stage.verify_registration_response",
+            "authentik.stages.authenticator_webauthn.registration.verify_registration_response",
             return_value=registration,
         ):
             response = self._register_malformed_attestation_certificate()
@@ -845,3 +846,90 @@ class TestAuthenticatorWebAuthnStage(APIFlowTestCase):
         self.assertEqual(device.credential_id, bytes_to_base64url(credential.credential_id))
         self.assertEqual(device.public_key, bytes_to_base64url(credential.cose_public_key))
         self.assertIsNone(device.attestation_certificate_pem)
+
+    def test_required_user_verification_rejects_unverified_registration(self):
+        self.stage.user_verification = "required"
+        self.stage.save(update_fields=["user_verification"])
+        plan = FlowPlan(flow_pk=self.flow.pk.hex, bindings=[self.binding], markers=[StageMarker()])
+        plan.context[PLAN_CONTEXT_PENDING_USER] = self.user
+        session = self.client.session
+        session[SESSION_KEY_PLAN] = plan
+        session.save()
+        url = reverse("authentik_api:flow-executor", kwargs={"flow_slug": self.flow.slug})
+        options = self.client.get(url, SERVER_NAME="localhost", SERVER_PORT="9000").json()
+        credential = SoftwareES256Credential("localhost", "http://localhost:9000")
+        response = self.client.post(
+            url,
+            data={
+                "component": "ak-stage-authenticator-webauthn",
+                "response": credential.registration_response(
+                    base64url_to_bytes(options["registration"]["challenge"]), user_verified=False
+                ),
+            },
+            SERVER_NAME="localhost",
+            SERVER_PORT="9000",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["component"], "ak-stage-authenticator-webauthn")
+        self.assertIn("response", response.json()["response_errors"])
+
+    def test_registration_retains_issued_and_current_policy(self):
+        cases = (
+            ("required", "discouraged", [-7], [-7], False, False),
+            ("discouraged", "required", [-7], [-7], False, False),
+            ("preferred", "preferred", [-257], [-7, -257], True, False),
+            ("preferred", "preferred", [-7, -257], [-257], True, False),
+            ("preferred", "preferred", [-7], [-7], True, True),
+        )
+        for issued_uv, current_uv, issued_algs, current_algs, verified, accepted in cases:
+            with self.subTest(
+                issued_uv=issued_uv,
+                current_uv=current_uv,
+                issued_algs=issued_algs,
+                current_algs=current_algs,
+            ):
+                self.stage.user_verification = issued_uv
+                self.stage.save()
+                plan = FlowPlan(
+                    flow_pk=self.flow.pk.hex, bindings=[self.binding], markers=[StageMarker()]
+                )
+                plan.context[PLAN_CONTEXT_PENDING_USER] = self.user
+                session = self.client.session
+                session[SESSION_KEY_PLAN] = plan
+                session.save()
+                url = reverse("authentik_api:flow-executor", kwargs={"flow_slug": self.flow.slug})
+                with patch(
+                    "authentik.stages.authenticator_webauthn.registration.supported_pub_key_algs",
+                    return_value=issued_algs,
+                ):
+                    options = self.client.get(
+                        url, SERVER_NAME="localhost", SERVER_PORT="9000"
+                    ).json()
+                self.stage.user_verification = current_uv
+                self.stage.save()
+                credential = SoftwareES256Credential("localhost", "http://localhost:9000")
+                with patch(
+                    "authentik.stages.authenticator_webauthn.registration.supported_pub_key_algs",
+                    return_value=current_algs,
+                ):
+                    response = self.client.post(
+                        url,
+                        data={
+                            "component": "ak-stage-authenticator-webauthn",
+                            "response": credential.registration_response(
+                                base64url_to_bytes(options["registration"]["challenge"]),
+                                user_verified=verified,
+                            ),
+                        },
+                        SERVER_NAME="localhost",
+                        SERVER_PORT="9000",
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    WebAuthnDevice.objects.filter(
+                        user=self.user, credential_id=bytes_to_base64url(credential.credential_id)
+                    ).exists(),
+                    accepted,
+                )
+                if not accepted:
+                    self.assertIn("response", response.json()["response_errors"])

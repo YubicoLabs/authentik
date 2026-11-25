@@ -4,15 +4,13 @@ from datetime import timedelta
 from hashlib import sha256
 from json import dumps, loads
 from typing import Any, cast
-from urllib.parse import urlsplit
 from uuid import UUID
 
-from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.x509 import load_der_x509_certificate
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils.timezone import now
+from django.utils.translation import gettext_lazy as _
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins
@@ -26,41 +24,30 @@ from rest_framework.viewsets import GenericViewSet
 from structlog.stdlib import get_logger
 from webauthn.helpers.base64url_to_bytes import base64url_to_bytes
 from webauthn.helpers.bytes_to_base64url import bytes_to_base64url
-from webauthn.helpers.exceptions import WebAuthnException
 from webauthn.helpers.options_to_json_dict import options_to_json_dict
-from webauthn.helpers.parse_attestation_object import parse_attestation_object
-from webauthn.helpers.structs import (
-    AttestationConveyancePreference,
-    AuthenticatorSelectionCriteria,
-    PublicKeyCredentialDescriptor,
-    PublicKeyCredentialHint,
-    ResidentKeyRequirement,
-    UserVerificationRequirement,
-)
-from webauthn.registration.generate_registration_options import generate_registration_options
-from webauthn.registration.verify_registration_response import (
-    VerifiedRegistration,
-    verify_registration_response,
-)
 
 from authentik.api.validation import validate
 from authentik.core.api.utils import JSONDictField, ModelSerializer
 from authentik.core.models import User
-from authentik.crypto.models import fingerprint_sha256
-from authentik.events.models import Event
+from authentik.events.models import Event, EventAction
 from authentik.lib.config import CONFIG
+from authentik.lib.utils.time import timedelta_from_string
 from authentik.rbac.filters import ObjectFilter
 from authentik.rbac.permissions import HasPermission
-from authentik.stages.authenticator_webauthn.algorithms import supported_pub_key_algs
 from authentik.stages.authenticator_webauthn.models import (
-    UNKNOWN_DEVICE_TYPE_AAGUID,
     AuthenticatorWebAuthnStage,
-    WebAuthnDevice,
-    WebAuthnDeviceType,
     WebAuthnEnrollment,
 )
-from authentik.stages.authenticator_webauthn.stage import (
-    get_authenticator_attachment,
+from authentik.stages.authenticator_webauthn.registration import (
+    VerifiedRegistrationData,
+    create_device,
+    generate_options,
+    verify_registration,
+)
+from authentik.stages.authenticator_webauthn.utils import (
+    get_expected_origins,
+    get_origin,
+    get_rp_id,
 )
 
 APP = "authentik_stages_authenticator_webauthn"
@@ -136,38 +123,13 @@ class WebAuthnEnrollmentCompleteSerializer(Serializer[dict[str, Any]]):
     response = JSONDictField()
 
 
-def enrollment_origin() -> tuple[str, str]:
-    """Trust deployment configuration, never the connector's Host header."""
-    origin = CONFIG.get("webauthn_enrollment.origin", "")
-    message = "Set AUTHENTIK_WEBAUTHN_ENROLLMENT__ORIGIN to a valid trusted origin."
-    try:
-        parsed = urlsplit(origin)
-        # urlsplit defers port validation until this property is accessed.
-        _ = parsed.port
-    except (TypeError, ValueError) as exc:
-        raise ValidationError(message) from exc
-    if (
-        not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-        or not (
-            parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname == "localhost")
-        )
-    ):
-        raise ValidationError(message)
-    return origin, parsed.hostname
-
-
 class WebAuthnEnrollmentViewSet(
     mixins.ListModelMixin, mixins.RetrieveModelMixin, GenericViewSet[WebAuthnEnrollment]
 ):
     """Prepare, verify and cancel enrollment on behalf of an existing user.
 
     Model permissions and native endpoint checks govern operations and target
-    visibility. Only the initiating caller or a superuser can manage an attempt.
+    visibility. Only the initiating caller or a superuser can complete an attempt.
     No raw credential-create or transaction-update endpoint exists.
     """
 
@@ -188,7 +150,7 @@ class WebAuthnEnrollmentViewSet(
         if getattr(self, "swagger_fake_view", False):
             return self.queryset.none()
         qs = WebAuthnEnrollment.objects.all().order_by("-created")
-        if not self.request.user.is_superuser:
+        if self.action == "complete" and not self.request.user.is_superuser:
             qs = qs.filter(requested_by=cast(User, self.request.user))
         return qs
 
@@ -201,6 +163,11 @@ class WebAuthnEnrollmentViewSet(
     def _authorize_target(self, user: User, stage: AuthenticatorWebAuthnStage | None) -> None:
         if not user.is_active:
             raise ValidationError("Target user is inactive.")
+        if user.is_superuser and not self.request.user.is_superuser:
+            self.permission_denied(
+                self.request,
+                message=_("Only superusers can enroll authenticators for superusers."),
+            )
         if not (
             self.request.user.has_perm("authentik_core.enroll_user_webauthn", user)
             or self.request.user.has_perm("authentik_core.enroll_user_webauthn")
@@ -218,9 +185,9 @@ class WebAuthnEnrollmentViewSet(
             if not ObjectFilter.visible_in_list(self.request, queryset, endpoint).exists():
                 self.permission_denied(self.request)
 
-    def _audit(self, operation: str, record: WebAuthnEnrollment) -> None:
+    def _audit(self, action: EventAction, record: WebAuthnEnrollment) -> None:
         Event.new(
-            f"webauthn_enrollment_{operation}",
+            action,
             transaction_id=str(record.pk),
             target_user_id=record.user_id,
             device_id=record.device_id,
@@ -237,7 +204,7 @@ class WebAuthnEnrollmentViewSet(
         user, stage = body.validated_data["user"], body.validated_data["stage"]
         caller = cast(User, request.user)  # IsAuthenticated runs before this action.
         self._authorize_target(user, stage)
-        origin, rp_id = enrollment_origin()
+        origin, rp_id = get_origin(request), get_rp_id(request)
         key_digest = sha256(body.validated_data["idempotency_key"].encode()).hexdigest()
         with transaction.atomic():
             # Lock stage before issuer: stage deletion also locks stage before
@@ -265,6 +232,7 @@ class WebAuthnEnrollmentViewSet(
                     record.user_id != user.pk
                     or record.stage_id != stage.pk
                     or record.origin != origin
+                    or record.rp_id != rp_id
                 ):
                     raise ValidationError(
                         {
@@ -289,38 +257,23 @@ class WebAuthnEnrollmentViewSet(
                         }
                     )
             else:
-                options = generate_registration_options(
-                    rp_id=rp_id,
-                    rp_name=cast(Any, request).brand.branding_title,
-                    user_id=user.uid.encode(),
-                    user_name=user.username,
-                    user_display_name=user.name,
-                    authenticator_selection=AuthenticatorSelectionCriteria(
-                        resident_key=ResidentKeyRequirement(str(stage.resident_key_requirement)),
-                        user_verification=UserVerificationRequirement(str(stage.user_verification)),
-                        authenticator_attachment=get_authenticator_attachment(stage),
-                    ),
-                    attestation=AttestationConveyancePreference.DIRECT,
-                    exclude_credentials=[
-                        PublicKeyCredentialDescriptor(id=base64url_to_bytes(value))
-                        for value in WebAuthnDevice.objects.filter(
-                            user=user, rp_id=rp_id, confirmed=True
-                        ).values_list("credential_id", flat=True)
-                    ],
-                    hints=[PublicKeyCredentialHint(h) for h in stage.hints] or None,
-                    supported_pub_key_algs=supported_pub_key_algs(),
-                )
-                ttl = enrollment_integer_setting(
-                    "webauthn_enrollment.ttl_seconds",
-                    300,
-                    minimum=1,
+                options = generate_options(
+                    stage, user, rp_id, cast(Any, request).brand.branding_title
                 )
                 try:
-                    expires = now() + timedelta(seconds=ttl)
-                except OverflowError as exc:
+                    duration = timedelta_from_string(stage.delegated_enrollment_timeout)
+                    if duration <= timedelta(0):
+                        raise ValueError("Nonpositive enrollment duration")
+                    expires = now() + duration
+                except (ValueError, OverflowError) as exc:
                     raise ValidationError(
-                        "AUTHENTIK_WEBAUTHN_ENROLLMENT__TTL_SECONDS produces an "
-                        "unrepresentable expiration date. Configure a shorter lifetime."
+                        {
+                            "detail": (
+                                "Configure a positive, representable "
+                                "enrollment duration on the stage."
+                            ),
+                            "code": "enrollment_policy_invalid",
+                        }
                     ) from exc
                 retention_days = enrollment_integer_setting(
                     "webauthn_enrollment.retention_days", 30, minimum=0
@@ -339,16 +292,12 @@ class WebAuthnEnrollmentViewSet(
                     idempotency_key_digest=key_digest,
                     challenge=bytes_to_base64url(options.challenge),
                     registration_options=options_to_json_dict(options),
-                    allowed_aaguids=[
-                        str(value)
-                        for value in stage.device_type_restrictions.values_list("aaguid", flat=True)
-                    ],
                     rp_id=rp_id,
                     origin=origin,
                     enrollment_expires=expires,
                     expires=cleanup_after,
                 )
-                self._audit("started", record)
+                self._audit(EventAction.WEBAUTHN_ENROLLMENT_STARTED, record)
         data = self.get_serializer(record).data
         data["registration"] = record.registration_options
         return Response(data, status=201)
@@ -407,7 +356,7 @@ class WebAuthnEnrollmentViewSet(
             if record.enrollment_expires <= now():
                 record.status = WebAuthnEnrollment.Status.EXPIRED
                 record.save(update_fields=["status"])
-                self._audit("expired", record)
+                self._audit(EventAction.WEBAUTHN_ENROLLMENT_EXPIRED, record)
                 # Normal return commits expiry; raising would roll it back.
                 return Response(
                     {"detail": "Enrollment has expired.", "code": "enrollment_expired"},
@@ -423,23 +372,17 @@ class WebAuthnEnrollmentViewSet(
                         "code": "enrollment_policy_unavailable",
                     }
                 )
-            verified, certificate, fingerprint = self._verify(record, response)
-            device_type = WebAuthnDeviceType.objects.filter(aaguid=verified.aaguid).first()
+            if record.rp_id != get_rp_id(request) or record.origin != get_origin(request):
+                raise ValidationError(
+                    {
+                        "detail": "Complete enrollment through the domain where it began.",
+                        "code": "enrollment_context_mismatch",
+                    }
+                )
+            verified = self._verify(record, response, stage)
             try:
                 with transaction.atomic():
-                    device = WebAuthnDevice.objects.create(
-                        name="Enrolled authenticator",
-                        user=user,
-                        confirmed=True,
-                        public_key=bytes_to_base64url(verified.credential_public_key),
-                        credential_id=bytes_to_base64url(verified.credential_id),
-                        sign_count=verified.sign_count,
-                        rp_id=record.rp_id,
-                        device_type=device_type,
-                        aaguid=verified.aaguid,
-                        attestation_certificate_pem=certificate,
-                        attestation_certificate_fingerprint=fingerprint,
-                    )
+                    device = create_device(user, record.rp_id, verified)
             except IntegrityError as exc:
                 raise ValidationError(
                     {"detail": "Credential ID already exists.", "code": "credential_exists"}
@@ -448,7 +391,7 @@ class WebAuthnEnrollmentViewSet(
             record.completed, record.device = now(), device
             record.response_digest = digest
             record.save(update_fields=["status", "completed", "device", "response_digest"])
-            self._audit("completed", record)
+            self._audit(EventAction.WEBAUTHN_ENROLLMENT_COMPLETED, record)
         return Response(self.get_serializer(record).data)
 
     @extend_schema(request=None, responses={200: WebAuthnEnrollmentSerializer})
@@ -467,79 +410,47 @@ class WebAuthnEnrollmentViewSet(
             if record.status == WebAuthnEnrollment.Status.PENDING:
                 record.status = WebAuthnEnrollment.Status.CANCELLED
                 record.save(update_fields=["status"])
-                self._audit("cancelled", record)
+                self._audit(EventAction.WEBAUTHN_ENROLLMENT_CANCELLED, record)
         return Response(self.get_serializer(record).data)
 
     def _verify(
-        self, record: WebAuthnEnrollment, response: dict[str, Any]
-    ) -> tuple[VerifiedRegistration, str | None, str | None]:
+        self,
+        record: WebAuthnEnrollment,
+        response: dict[str, Any],
+        stage: AuthenticatorWebAuthnStage,
+    ) -> VerifiedRegistrationData:
         try:
             client_data = loads(base64url_to_bytes(response["response"]["clientDataJSON"]))
-            # This endpoint supports same-origin ceremonies only. The verifier
-            # validates origin, but does not enforce the embedding context.
+            # The delegated endpoint accepts same-origin creation ceremonies only.
             if (
                 not isinstance(client_data, dict)
                 or client_data.get("crossOrigin", False) is not False
                 or "topOrigin" in client_data
             ):
                 raise ValueError("Unsupported credential creation context")
-            offered_algorithms = {
-                option["alg"] for option in record.registration_options["pubKeyCredParams"]
-            }
-            allowed_algorithms = [
-                algorithm
-                for algorithm in supported_pub_key_algs()
-                if algorithm in offered_algorithms
-            ]
-            if not allowed_algorithms:
-                raise ValueError("No offered algorithm is currently supported")
-            verified = verify_registration_response(
-                credential=response,
-                expected_challenge=base64url_to_bytes(record.challenge),
-                expected_rp_id=record.rp_id,
-                expected_origin=record.origin,
-                require_user_verification=record.registration_options["authenticatorSelection"][
+        except ValueError, TypeError, KeyError:
+            raise ValidationError(
+                {"detail": "Registration failed.", "code": "credential_invalid"}
+            ) from None
+        try:
+            return verify_registration(
+                stage,
+                response,
+                challenge=base64url_to_bytes(record.challenge),
+                rp_id=record.rp_id,
+                origins=get_expected_origins(self.request, stage.additional_accepted_origins),
+                issued_uv_required=record.registration_options["authenticatorSelection"][
                     "userVerification"
                 ]
                 == "required",
-                supported_pub_key_algs=allowed_algorithms,
+                issued_algorithms=[
+                    option["alg"] for option in record.registration_options["pubKeyCredParams"]
+                ],
             )
-        except (WebAuthnException, ValueError, TypeError, KeyError) as exc:
-            LOGGER.warning(
-                "WebAuthn enrollment verification failed",
-                error_type=type(exc).__name__,
-                enrollment_id=str(record.pk),
+        except ValidationError as exc:
+            code = (
+                "credential_exists"
+                if exc.get_codes() == ["credential_exists"]
+                else "credential_invalid"
             )
-            raise ValidationError(
-                {"detail": "Registration failed.", "code": "credential_invalid"}
-            ) from exc
-        allowed = set(record.allowed_aaguids)
-        aaguid = str(verified.aaguid)
-        unknown_allowed = (
-            UNKNOWN_DEVICE_TYPE_AAGUID in allowed
-            and not WebAuthnDeviceType.objects.filter(aaguid=aaguid).exists()
-        )
-        if allowed and aaguid not in allowed and not unknown_allowed:
-            raise ValidationError({"detail": "Invalid device type.", "code": "credential_invalid"})
-        if WebAuthnDevice.objects.filter(
-            credential_id=bytes_to_base64url(verified.credential_id)
-        ).exists():
-            raise ValidationError(
-                {"detail": "Credential ID already exists.", "code": "credential_exists"}
-            )
-        certificate = fingerprint = None
-        attestation = parse_attestation_object(verified.attestation_object)
-        if attestation.att_stmt.x5c:
-            try:
-                cert = load_der_x509_certificate(attestation.att_stmt.x5c[0])
-            except ValueError as exc:
-                # Match the interactive stage: certificate storage is optional after verification.
-                LOGGER.warning(
-                    "Failed to parse enrollment attestation certificate",
-                    error_type=type(exc).__name__,
-                    enrollment_id=str(record.pk),
-                )
-            else:
-                certificate = cert.public_bytes(Encoding.PEM).decode()
-                fingerprint = fingerprint_sha256(cert)
-        return verified, certificate, fingerprint
+            raise ValidationError({"detail": str(exc.detail[0]), "code": code}) from None

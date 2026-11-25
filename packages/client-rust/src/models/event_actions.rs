@@ -95,6 +95,14 @@ pub enum EventActions {
     AccessRequestDenied,
     #[serde(rename = "access_request_revoked")]
     AccessRequestRevoked,
+    #[serde(rename = "webauthn_enrollment_started")]
+    WebauthnEnrollmentStarted,
+    #[serde(rename = "webauthn_enrollment_completed")]
+    WebauthnEnrollmentCompleted,
+    #[serde(rename = "webauthn_enrollment_cancelled")]
+    WebauthnEnrollmentCancelled,
+    #[serde(rename = "webauthn_enrollment_expired")]
+    WebauthnEnrollmentExpired,
     #[serde(rename = "custom_")]
     Custom,
 }
@@ -143,6 +151,10 @@ impl std::fmt::Display for EventActions {
             Self::AccessRequestApproved => write!(f, "access_request_approved"),
             Self::AccessRequestDenied => write!(f, "access_request_denied"),
             Self::AccessRequestRevoked => write!(f, "access_request_revoked"),
+            Self::WebauthnEnrollmentStarted => write!(f, "webauthn_enrollment_started"),
+            Self::WebauthnEnrollmentCompleted => write!(f, "webauthn_enrollment_completed"),
+            Self::WebauthnEnrollmentCancelled => write!(f, "webauthn_enrollment_cancelled"),
+            Self::WebauthnEnrollmentExpired => write!(f, "webauthn_enrollment_expired"),
             Self::Custom => write!(f, "custom_"),
         }
     }

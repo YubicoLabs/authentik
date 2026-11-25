@@ -55,6 +55,10 @@ export const EventActions = {
     AccessRequestApproved: "access_request_approved",
     AccessRequestDenied: "access_request_denied",
     AccessRequestRevoked: "access_request_revoked",
+    WebauthnEnrollmentStarted: "webauthn_enrollment_started",
+    WebauthnEnrollmentCompleted: "webauthn_enrollment_completed",
+    WebauthnEnrollmentCancelled: "webauthn_enrollment_cancelled",
+    WebauthnEnrollmentExpired: "webauthn_enrollment_expired",
     Custom: "custom_",
     UnknownDefaultOpenApi: "11184809",
 } as const;

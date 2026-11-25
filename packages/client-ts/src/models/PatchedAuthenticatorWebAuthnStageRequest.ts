@@ -38,6 +38,10 @@ export interface PatchedAuthenticatorWebAuthnStageRequest {
     configureFlow?: string | null;
     friendlyName?: string;
     userVerification?: UserVerificationEnum;
+    /**
+     * How long a delegated enrollment may remain pending.
+     */
+    delegatedEnrollmentTimeout?: string;
     authenticatorAttachment?: AuthenticatorAttachmentEnum | null;
     residentKeyRequirement?: UserVerificationEnum;
     hints?: Array<WebAuthnHintEnum>;
@@ -84,6 +88,10 @@ export function PatchedAuthenticatorWebAuthnStageRequestFromJSONTyped(
             json["user_verification"] == null
                 ? undefined
                 : UserVerificationEnumFromJSON(json["user_verification"]),
+        delegatedEnrollmentTimeout:
+            json["delegated_enrollment_timeout"] == null
+                ? undefined
+                : json["delegated_enrollment_timeout"],
         authenticatorAttachment:
             json["authenticator_attachment"] === undefined
                 ? undefined
@@ -127,6 +135,7 @@ export function PatchedAuthenticatorWebAuthnStageRequestToJSONTyped(
         configure_flow: value["configureFlow"],
         friendly_name: value["friendlyName"],
         user_verification: UserVerificationEnumToJSON(value["userVerification"]),
+        delegated_enrollment_timeout: value["delegatedEnrollmentTimeout"],
         authenticator_attachment: AuthenticatorAttachmentEnumToJSON(
             value["authenticatorAttachment"],
         ),

@@ -10,7 +10,6 @@ from authentik.stages.authenticator_webauthn.tests import test_enrollment as hel
 
 class TestEnrollmentLifecycle(APITestCase):
     setUp = helpers.TestWebAuthnEnrollment.setUp
-    tearDown = helpers.TestWebAuthnEnrollment.tearDown
     begin = helpers.TestWebAuthnEnrollment.begin
     complete = helpers.TestWebAuthnEnrollment.complete
     credential_response = helpers.TestWebAuthnEnrollment.credential_response
@@ -136,7 +135,7 @@ class TestEnrollmentLifecycle(APITestCase):
             ]
         )
         self.client.force_login(replacement)
-        self.assertEqual(self.client.get(detail).status_code, 404)
+        self.assertEqual(self.client.get(detail).status_code, 200)
         self.assertEqual(self.complete(begun.data["pk"], response).status_code, 404)
 
         self.client.force_login(administrator)

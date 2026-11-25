@@ -23,6 +23,7 @@ class AuthenticatorWebAuthnStageSerializer(StageSerializer):
             "configure_flow",
             "friendly_name",
             "user_verification",
+            "delegated_enrollment_timeout",
             "authenticator_attachment",
             "resident_key_requirement",
             "hints",

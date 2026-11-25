@@ -8,7 +8,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 from webauthn.helpers.base64url_to_bytes import base64url_to_bytes
 
-from authentik.core.models import Token, TokenIntents, UserTypes
+from authentik.core.models import Group, Token, TokenIntents, UserTypes
 from authentik.core.tests.utils import create_test_admin_user, create_test_user
 from authentik.lib.config import CONFIG, UNSET
 from authentik.lib.generators import generate_id
@@ -220,3 +220,43 @@ class TestEnrollmentAuthorization(APITestCase):
                 self.assertEqual(accepted.data["status"], "completed")
                 if completed:
                     self.assertEqual(accepted.data, original)
+
+    def test_global_issuer_cannot_enroll_superusers(self):
+        self.caller.assign_perms_to_managed_role("authentik_core.enroll_user_webauthn")
+        privileged = Group.objects.create(name=generate_id(), is_superuser=True)
+        child = Group.objects.create(name=generate_id())
+        child.parents.add(privileged)
+        for membership in (privileged, child):
+            with self.subTest(inherited=membership == child):
+                self.user.ak_groups.add(membership)
+                try:
+                    self.assertEqual(self.begin_for(self.user).status_code, 403)
+                finally:
+                    self.user.ak_groups.remove(membership)
+        self.assertEqual(self.begin_for(self.user).status_code, 201)
+
+    def test_target_promotion_blocks_completion_and_replay(self):
+        privileged = Group.objects.create(name=generate_id(), is_superuser=True)
+        for completed in (False, True):
+            with self.subTest(completed=completed):
+                original = self.prepare(completed)
+                self.user.ak_groups.add(privileged)
+                try:
+                    self.assert_rejected_without_changing_attempt(403, original)
+                finally:
+                    self.user.ak_groups.remove(privileged)
+                self.assertEqual(self.complete().status_code, 200)
+
+    def test_superuser_issuer_can_enroll_superusers_until_demoted(self):
+        privileged = Group.objects.create(name=generate_id(), is_superuser=True)
+        self.user.ak_groups.add(privileged)
+        self.caller.ak_groups.add(privileged)
+        for completed in (False, True):
+            with self.subTest(completed=completed):
+                original = self.prepare(completed)
+                self.caller.ak_groups.remove(privileged)
+                try:
+                    self.assert_rejected_without_changing_attempt(403, original)
+                finally:
+                    self.caller.ak_groups.add(privileged)
+                self.assertEqual(self.complete().status_code, 200)

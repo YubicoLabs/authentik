@@ -8694,6 +8694,10 @@
                         "access_request_approved",
                         "access_request_denied",
                         "access_request_revoked",
+                        "webauthn_enrollment_started",
+                        "webauthn_enrollment_completed",
+                        "webauthn_enrollment_cancelled",
+                        "webauthn_enrollment_expired",
                         "custom_"
                     ],
                     "title": "Action"
@@ -8825,6 +8829,10 @@
                                 "access_request_approved",
                                 "access_request_denied",
                                 "access_request_revoked",
+                                "webauthn_enrollment_started",
+                                "webauthn_enrollment_completed",
+                                "webauthn_enrollment_cancelled",
+                                "webauthn_enrollment_expired",
                                 "custom_"
                             ],
                             "title": "Action"
@@ -9594,6 +9602,10 @@
                         "access_request_approved",
                         "access_request_denied",
                         "access_request_revoked",
+                        "webauthn_enrollment_started",
+                        "webauthn_enrollment_completed",
+                        "webauthn_enrollment_cancelled",
+                        "webauthn_enrollment_expired",
                         "custom_"
                     ],
                     "title": "Action",
@@ -15091,6 +15103,12 @@
                         "discouraged"
                     ],
                     "title": "User verification"
+                },
+                "delegated_enrollment_timeout": {
+                    "type": "string",
+                    "minLength": 1,
+                    "title": "Delegated enrollment timeout",
+                    "description": "How long a delegated enrollment may remain pending."
                 },
                 "authenticator_attachment": {
                     "type": [
