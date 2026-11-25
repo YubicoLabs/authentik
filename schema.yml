@@ -1535,6 +1535,158 @@ paths:
           $ref: '#/components/responses/ValidationErrorResponse'
         '403':
           $ref: '#/components/responses/GenericErrorResponse'
+  /authenticators/admin/webauthn-enrollments/:
+    get:
+      operationId: authenticators_admin_webauthn_enrollments_list
+      description: |-
+        Prepare, verify and cancel enrollment on behalf of an existing user.
+
+        Model permissions and native endpoint checks govern operations and target
+        visibility. Only the initiating caller or a superuser can complete an attempt.
+        No raw credential-create or transaction-update endpoint exists.
+      parameters:
+      - in: query
+        name: device
+        schema:
+          type: integer
+      - $ref: '#/components/parameters/QueryPaginationPage'
+      - $ref: '#/components/parameters/QueryPaginationPageSize'
+      - in: query
+        name: user
+        schema:
+          type: integer
+      tags:
+      - authenticators
+      security:
+      - authentik: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedWebAuthnEnrollmentList'
+          description: ''
+        '400':
+          $ref: '#/components/responses/ValidationErrorResponse'
+        '403':
+          $ref: '#/components/responses/GenericErrorResponse'
+  /authenticators/admin/webauthn-enrollments/{id}/:
+    get:
+      operationId: authenticators_admin_webauthn_enrollments_retrieve
+      description: |-
+        Prepare, verify and cancel enrollment on behalf of an existing user.
+
+        Model permissions and native endpoint checks govern operations and target
+        visibility. Only the initiating caller or a superuser can complete an attempt.
+        No raw credential-create or transaction-update endpoint exists.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this WebAuthn enrollment.
+        required: true
+      tags:
+      - authenticators
+      security:
+      - authentik: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnEnrollment'
+          description: ''
+        '400':
+          $ref: '#/components/responses/ValidationErrorResponse'
+        '403':
+          $ref: '#/components/responses/GenericErrorResponse'
+  /authenticators/admin/webauthn-enrollments/{id}/cancel/:
+    post:
+      operationId: authenticators_admin_webauthn_enrollments_cancel_create
+      description: Cancel pending enrollment; completed credentials use device revocation.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this WebAuthn enrollment.
+        required: true
+      tags:
+      - authenticators
+      security:
+      - authentik: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnEnrollment'
+          description: ''
+        '400':
+          $ref: '#/components/responses/ValidationErrorResponse'
+        '403':
+          $ref: '#/components/responses/GenericErrorResponse'
+  /authenticators/admin/webauthn-enrollments/{id}/complete/:
+    post:
+      operationId: authenticators_admin_webauthn_enrollments_complete_create
+      description: Verify the attestation and atomically create a real WebAuthnDevice.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this WebAuthn enrollment.
+        required: true
+      tags:
+      - authenticators
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnEnrollmentCompleteRequest'
+        required: true
+      security:
+      - authentik: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnEnrollment'
+          description: ''
+        '400':
+          $ref: '#/components/responses/ValidationErrorResponse'
+        '403':
+          $ref: '#/components/responses/GenericErrorResponse'
+  /authenticators/admin/webauthn-enrollments/begin/:
+    post:
+      operationId: authenticators_admin_webauthn_enrollments_begin_create
+      description: Return creation options bound to the user, RP and a one-time challenge.
+      tags:
+      - authenticators
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnEnrollmentBeginRequest'
+        required: true
+      security:
+      - authentik: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnEnrollmentOptions'
+          description: ''
+        '400':
+          $ref: '#/components/responses/ValidationErrorResponse'
+        '403':
+          $ref: '#/components/responses/GenericErrorResponse'
   /authenticators/admin/webauthn/{id}/:
     get:
       operationId: authenticators_admin_webauthn_retrieve
@@ -38408,6 +38560,9 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'
@@ -38464,6 +38619,10 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          minLength: 1
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'
@@ -41602,6 +41761,10 @@ components:
       - access_request_approved
       - access_request_denied
       - access_request_revoked
+      - webauthn_enrollment_started
+      - webauthn_enrollment_completed
+      - webauthn_enrollment_cancelled
+      - webauthn_enrollment_expired
       - custom_
       type: string
     EventMatcherPolicy:
@@ -50671,6 +50834,21 @@ components:
       - autocomplete
       - pagination
       - results
+    PaginatedWebAuthnEnrollmentList:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebAuthnEnrollment'
+        autocomplete:
+          $ref: '#/components/schemas/Autocomplete'
+      required:
+      - autocomplete
+      - pagination
+      - results
     Pagination:
       type: object
       properties:
@@ -51619,6 +51797,10 @@ components:
           type: string
         user_verification:
           $ref: '#/components/schemas/UserVerificationEnum'
+        delegated_enrollment_timeout:
+          type: string
+          minLength: 1
+          description: How long a delegated enrollment may remain pending.
         authenticator_attachment:
           allOf:
           - $ref: '#/components/schemas/AuthenticatorAttachmentEnum'
@@ -63787,6 +63969,151 @@ components:
       required:
       - aaguid
       - description
+    WebAuthnEnrollment:
+      type: object
+      description: Public status; enrollment options are returned only by begin.
+      properties:
+        pk:
+          type: string
+          format: uuid
+          readOnly: true
+          title: Id
+        user:
+          type: integer
+          readOnly: true
+        stage:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        rp_id:
+          type: string
+          readOnly: true
+        origin:
+          type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/WebAuthnEnrollmentStatusEnum'
+          readOnly: true
+        expires:
+          type: string
+          format: date-time
+          readOnly: true
+        created:
+          type: string
+          format: date-time
+          readOnly: true
+        completed:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        device:
+          type: integer
+          readOnly: true
+          nullable: true
+      required:
+      - completed
+      - created
+      - device
+      - expires
+      - origin
+      - pk
+      - rp_id
+      - stage
+      - status
+      - user
+    WebAuthnEnrollmentBeginRequest:
+      type: object
+      properties:
+        user:
+          type: integer
+        stage:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          minLength: 1
+      required:
+      - idempotency_key
+      - stage
+      - user
+    WebAuthnEnrollmentCompleteRequest:
+      type: object
+      properties:
+        response:
+          type: object
+          additionalProperties: {}
+      required:
+      - response
+    WebAuthnEnrollmentOptions:
+      type: object
+      description: Public status; enrollment options are returned only by begin.
+      properties:
+        pk:
+          type: string
+          format: uuid
+          readOnly: true
+          title: Id
+        user:
+          type: integer
+          readOnly: true
+        stage:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        rp_id:
+          type: string
+          readOnly: true
+        origin:
+          type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/WebAuthnEnrollmentStatusEnum'
+          readOnly: true
+        expires:
+          type: string
+          format: date-time
+          readOnly: true
+        created:
+          type: string
+          format: date-time
+          readOnly: true
+        completed:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        device:
+          type: integer
+          readOnly: true
+          nullable: true
+        registration:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+      required:
+      - completed
+      - created
+      - device
+      - expires
+      - origin
+      - pk
+      - registration
+      - rp_id
+      - stage
+      - status
+      - user
+    WebAuthnEnrollmentStatusEnum:
+      enum:
+      - pending
+      - completed
+      - cancelled
+      - expired
+      type: string
     WebAuthnHintEnum:
       enum:
       - security-key

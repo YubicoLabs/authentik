@@ -48,6 +48,18 @@ export const EventActionLabelRecord: Record<EventActions, string> = {
     [EventActions.AuthenticatorUnlocked]: msg("Authenticator unlocked", {
         id: "events.authenticator-unlocked.label",
     }),
+    [EventActions.WebauthnEnrollmentStarted]: msg("WebAuthn enrollment started", {
+        id: "events.webauthn-enrollment.started.label",
+    }),
+    [EventActions.WebauthnEnrollmentCompleted]: msg("WebAuthn enrollment completed", {
+        id: "events.webauthn-enrollment.completed.label",
+    }),
+    [EventActions.WebauthnEnrollmentCancelled]: msg("WebAuthn enrollment cancelled", {
+        id: "events.webauthn-enrollment.cancelled.label",
+    }),
+    [EventActions.WebauthnEnrollmentExpired]: msg("WebAuthn enrollment expired", {
+        id: "events.webauthn-enrollment.expired.label",
+    }),
     [EventActions.SecretView]: msg("Secret was viewed"),
     [EventActions.SecretRotate]: msg("Secret was rotated"),
     [EventActions.InvitationUsed]: msg("Invitation used"),

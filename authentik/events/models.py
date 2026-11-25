@@ -156,6 +156,11 @@ class EventAction(models.TextChoices):
     ACCESS_REQUEST_DENIED = "access_request_denied"
     ACCESS_REQUEST_REVOKED = "access_request_revoked"
 
+    WEBAUTHN_ENROLLMENT_STARTED = "webauthn_enrollment_started"
+    WEBAUTHN_ENROLLMENT_COMPLETED = "webauthn_enrollment_completed"
+    WEBAUTHN_ENROLLMENT_CANCELLED = "webauthn_enrollment_cancelled"
+    WEBAUTHN_ENROLLMENT_EXPIRED = "webauthn_enrollment_expired"
+
     CUSTOM_PREFIX = "custom_"
 
 

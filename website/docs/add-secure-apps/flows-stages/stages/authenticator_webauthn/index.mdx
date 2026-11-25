@@ -15,6 +15,10 @@ This stage supports common WebAuthn authenticator types, including:
 
 Enrolled authenticators can later be used with the [Authenticator Validation stage](../authenticator_validate/index.mdx).
 
+For an integration that enrolls credentials on behalf of existing users, see
+[Delegated WebAuthn enrollment](./delegated-enrollment.mdx). The delegated API uses
+stage settings without executing the interactive flow.
+
 ## Configuration options
 
 - **Additional accepted origins**: additional trusted origins for registration, matched exactly. The current request origin is always accepted.

@@ -225,6 +225,7 @@ class TestWebAuthnOrigins(TestCase):
     def test_registration_origins(self):
         for allowed in [[], [WEB_ORIGIN, ANDROID_ORIGIN, OTHER_ANDROID_ORIGIN, NATIVE_ORIGIN]]:
             self.registration_stage.additional_accepted_origins = allowed
+            self.registration_stage.save(update_fields=["additional_accepted_origins"])
             for origin in [
                 "https://testserver",
                 ANDROID_ORIGIN,
@@ -246,6 +247,7 @@ class TestWebAuthnOrigins(TestCase):
 
     def test_registration_checks_preserved(self):
         self.registration_stage.additional_accepted_origins = [ANDROID_ORIGIN]
+        self.registration_stage.save(update_fields=["additional_accepted_origins"])
         for kwargs in [{"rp_id": "other.example.com"}, {"challenge": b"wrong challenge"}]:
             with self.subTest(kwargs=kwargs), self.assertRaises(ValidationError):
                 self.register(ANDROID_ORIGIN, **kwargs)
@@ -296,6 +298,7 @@ class TestWebAuthnOrigins(TestCase):
 
     def test_stage_isolation(self):
         self.registration_stage.additional_accepted_origins = [ANDROID_ORIGIN]
+        self.registration_stage.save(update_fields=["additional_accepted_origins"])
         self.registration_stage.save()
         self.create_device()
         with self.assertRaises(ValidationError):

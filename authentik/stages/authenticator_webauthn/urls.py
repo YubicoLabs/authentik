@@ -5,6 +5,9 @@ from authentik.stages.authenticator_webauthn.api.devices import (
     WebAuthnAdminDeviceViewSet,
     WebAuthnDeviceViewSet,
 )
+from authentik.stages.authenticator_webauthn.api.enrollment import (
+    WebAuthnEnrollmentViewSet,
+)
 from authentik.stages.authenticator_webauthn.api.stages import AuthenticatorWebAuthnStageViewSet
 
 api_urlpatterns = [
@@ -14,6 +17,11 @@ api_urlpatterns = [
         "authenticators/admin/webauthn",
         WebAuthnAdminDeviceViewSet,
         "admin-webauthndevice",
+    ),
+    (
+        "authenticators/admin/webauthn-enrollments",
+        WebAuthnEnrollmentViewSet,
+        "admin-webauthnenrollment",
     ),
     ("authenticators/webauthn", WebAuthnDeviceViewSet),
 ]
